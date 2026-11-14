@@ -60,8 +60,9 @@ type IndexWriter struct {
 	postIndex  *Buffer // temp file holding posting list index
 	numTrigram int
 
-	inbuf []byte  // input buffer
-	main  *Buffer // main index file
+	inbuf  []byte  // input buffer
+	main   *Buffer // main index file
+	sorter postSorter
 }
 
 const npost = 64 << 20 / 8 // 64 MB worth of post entries
@@ -197,9 +198,7 @@ func (ix *IndexWriter) Add(name string, f io.Reader) error {
 		for _, file := range files {
 			r, err := file.Open()
 			if err != nil {
-				println("no3", name)
-
-				log.Printf("%s: %v", r, err)
+				log.Printf("%s: %v", name, err)
 				continue
 			}
 			ix.add(name+"\x01"+file.Name, r)
@@ -357,9 +356,26 @@ func (ix *IndexWriter) Flush() {
 	os.Remove(ix.nameIndex.name)
 	os.Remove(ix.postIndex.name)
 
-	log.Printf("%d data bytes, %d index bytes", ix.totalBytes, ix.main.Offset())
+	if ix.Verbose {
+		log.Printf("%d data bytes, %d index bytes", ix.totalBytes, ix.main.Offset())
+	}
 
 	ix.main.Flush()
+	ix.nameData.close()
+	ix.postFile.close()
+	ix.nameIndex.close()
+	ix.postIndex.close()
+	ix.main.close()
+}
+
+// TotalBytes returns the number of bytes of file content indexed so far.
+func (ix *IndexWriter) TotalBytes() int64 {
+	return ix.totalBytes
+}
+
+// NumFiles returns the number of files indexed so far.
+func (ix *IndexWriter) NumFiles() int {
+	return ix.numName
 }
 
 func copyFile(dst, src *Buffer) {
@@ -395,7 +411,7 @@ func (ix *IndexWriter) flushPost() {
 	if ix.Verbose {
 		log.Printf("flush %d entries to %v", len(ix.post), ix.postFile.name)
 	}
-	sortPost(ix.post)
+	ix.sorter.sort(ix.post)
 
 	start := ix.postFile.Offset()
 	var w postDataWriter
@@ -429,10 +445,12 @@ func (ix *IndexWriter) mergePost(out *Buffer) {
 	var h postHeap
 
 	if len(ix.postEnds) > 0 {
-		log.Printf("merge mem + %d MB disk", ix.postEnds[len(ix.postEnds)-1]>>20)
+		if ix.Verbose {
+			log.Printf("merge mem + %d MB disk", ix.postEnds[len(ix.postEnds)-1]>>20)
+		}
 		h.addFile(ix.postFile, ix.postEnds)
 	}
-	sortPost(ix.post)
+	ix.sorter.sort(ix.post)
 	h.addMem(ix.post)
 
 	var w postDataWriter
@@ -598,6 +616,18 @@ type Buffer struct {
 	tmp     [8]byte
 }
 
+// TempDir is the directory used for temporary files created while
+// writing or merging indexes. If empty, the system default is used.
+var TempDir string
+
+// close closes the underlying file, if any.
+func (b *Buffer) close() {
+	if b.file != nil {
+		b.file.Close()
+		b.file = nil
+	}
+}
+
 // bufCreate creates a new file with the given name and returns a
 // corresponding Buffer.  If name is empty, bufCreate uses a
 // temporary file.
@@ -609,7 +639,7 @@ func bufCreate(name string) *Buffer {
 	if name != "" {
 		f, err = os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	} else {
-		f, err = os.CreateTemp("", "csearch")
+		f, err = os.CreateTemp(TempDir, "csearch")
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -770,14 +800,23 @@ func validUTF8(c1, c2 uint32) bool {
 // Run two rounds of 12-bit radix sort.
 const sortK = 12
 
-var sortTmp []postEntry
-var sortN [1 << sortK]int
+// A postSorter holds scratch space for sorting post entries.
+// Each IndexWriter has its own, so that writers can run concurrently.
+type postSorter struct {
+	tmp []postEntry
+	n   [1 << sortK]int
+}
 
 func sortPost(post []postEntry) {
-	if len(post) > len(sortTmp) {
-		sortTmp = make([]postEntry, len(post))
+	new(postSorter).sort(post)
+}
+
+func (s *postSorter) sort(post []postEntry) {
+	if len(post) > len(s.tmp) {
+		s.tmp = make([]postEntry, len(post))
 	}
-	tmp := sortTmp[:len(post)]
+	tmp := s.tmp[:len(post)]
+	sortN := &s.n
 
 	const k = sortK
 	for i := range sortN {
@@ -788,7 +827,7 @@ func sortPost(post []postEntry) {
 		sortN[r]++
 	}
 	tot := 0
-	for i, count := range &sortN {
+	for i, count := range sortN {
 		sortN[i] = tot
 		tot += count
 	}
@@ -808,7 +847,7 @@ func sortPost(post []postEntry) {
 		sortN[r]++
 	}
 	tot = 0
-	for i, count := range &sortN {
+	for i, count := range sortN {
 		sortN[i] = tot
 		tot += count
 	}

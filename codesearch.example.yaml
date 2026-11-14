@@ -1,0 +1,65 @@
+# Codesearch configuration.
+#
+# Copy this file to ~/.config/codesearch/config.yaml (or point to it with
+# -config or $CODESEARCH_CONFIG), list the folders you want to search,
+# then run:
+#
+#   csindex          # build or incrementally update the index
+#   csweb            # serve the web UI (also keeps the index fresh)
+#
+# Paths may use ~ and $ENV_VARS. Relative paths are relative to this file.
+
+# Where index shards and metadata are stored. Needs roughly 20-30% of the
+# size of the indexed source. Default: ~/.cache/codesearch
+index_dir: ~/.cache/codesearch
+
+# Address for csweb. Keep it on localhost unless you want to share
+# your code with the network.
+listen: localhost:2473
+
+# How often csweb re-scans the repositories and indexes changed files.
+# Unchanged repositories cost only a directory scan. 0 disables it
+# (run csindex yourself, e.g. from cron).
+update_interval: 10m
+
+# Files larger than this are not indexed (generated or data files, mostly).
+max_file_size: 2MB
+
+# Large repositories are split into shards of about this many files, so an
+# incremental update only rewrites the shards that changed and searches
+# run in parallel. The default suits trees from small to AOSP-sized.
+# shard_files: 25000
+
+# Number of shards indexed concurrently (each needs ~400 MB of memory).
+# Default: half the CPUs, at most 4.
+# parallelism: 4
+
+# Glob patterns excluded from every repository, in addition to the
+# built-in defaults (binaries, images, archives, node_modules, ...;
+# set use_default_excludes: false to turn those off). Hidden files and
+# directories (.git, .repo, ...) are always skipped unless include_hidden
+# is true.
+#
+#   name       a file or directory with this name anywhere ("*.min.js" too)
+#   /out       only the top-level "out" directory (patterns with a slash
+#              match the path from the repository root)
+exclude:
+  - "*.log"
+  - "*.lock"
+  - "package-lock.json"
+
+# The folders to index. name defaults to the folder's base name and is
+# what you use in repo: queries.
+repos:
+  - path: ~/src/myproject
+
+  - name: aosp
+    path: ~/aosp
+    exclude:
+      - /out              # build output
+      - /prebuilts        # binary toolchains and SDKs
+      - /external/chromium-webview
+      - "*.apk"
+
+  # - name: linux
+  #   path: ~/src/linux

@@ -1,15 +1,81 @@
 Code Search is a tool for indexing and then performing
 regular expression searches over large bodies of source code.
-It is a set of command-line programs written in Go.
+It is a set of programs written in Go: a web app for searching
+and browsing your repositories, and command-line tools.
 
-For background and an overview of the commands,
-see http://swtch.com/~rsc/regexp/regexp4.html.
+For background on the trigram index, see
+http://swtch.com/~rsc/regexp/regexp4.html.
 
 To install:
 
-	go get github.com/google/codesearch/cmd/...
+	go install github.com/google/codesearch/cmd/...@latest
 
-Use "go get -u" to update an existing installation.
+or, from a checkout:
+
+	go install ./cmd/...
+
+
+Web app quick start
+-------------------
+
+1. Create a configuration file listing the folders to search:
+
+	mkdir -p ~/.config/codesearch
+	cp codesearch.example.yaml ~/.config/codesearch/config.yaml
+	$EDITOR ~/.config/codesearch/config.yaml
+
+   The file sets the folders to index (repos), what to exclude,
+   and where the index is stored (index_dir). See
+   codesearch.example.yaml for every option.
+
+2. Build the index (optional: csweb also does this in the background):
+
+	csindex
+
+3. Start the web app and open http://localhost:2473/
+
+	csweb
+
+The first index run reads every file. Later runs (csindex, or csweb
+every update_interval) only scan the folders' metadata and re-read files
+whose size or modification time changed, so they take seconds even for
+trees as large as AOSP. Use csindex -status to see what is indexed and
+csindex -full to rebuild from scratch.
+
+
+Searching
+---------
+
+	foo bar         files containing both foo and bar (regular expressions)
+	"foo(bar"       literal text
+	-foo            files not containing foo
+	file:\.cc$      path matches a regexp (-file: to exclude; also f:)
+	lang:java       language (c, c++, java, kotlin, go, py, rust, ts, bp, aidl, ...)
+	repo:aosp       repository name (-repo: to exclude)
+	sym:Activity    definitions of a symbol
+	case:yes        case-sensitive (default: case-insensitive unless the
+	                query has upper-case letters)
+
+In the code browser, click any identifier to see its definitions and
+references, or Ctrl/Cmd-click to jump straight to the definition.
+Click line numbers to link to lines (shift-click for ranges).
+Press / to search, ? for help.
+
+Cross references are search based: they use the trigram index to find
+the identifier as a whole word and classify each hit as a definition or
+a reference with language-aware heuristics. That works for every
+language without building the code, at the cost of the occasional
+false positive.
+
+
+Command-line tools
+------------------
+
+	csindex   build and incrementally update the index from the config file
+	csweb     web interface (also keeps the index up to date)
+	cindex    the original single-file indexer ($CSEARCHINDEX)
+	csearch   search the cindex index from the command line
+	cgrep     grep using the same regexp engine, without an index
 
 Russ Cox
 rsc@swtch.com

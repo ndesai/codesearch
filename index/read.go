@@ -195,6 +195,48 @@ func (ix *Index) PrintStats() {
 
 func Open(file string) *Index {
 	mm := mmap(file)
+	return openData(file, mm)
+}
+
+// OpenFile is like Open but returns an error instead of exiting the process
+// if the file cannot be opened or is not a valid index.
+// The caller should call Close when done with the index.
+func OpenFile(file string) (ix *Index, err error) {
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	mm, err := mmapFileErr(f)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	defer func() {
+		if e := recover(); e != nil {
+			munmap(mm)
+			ix, err = nil, fmt.Errorf("%s: %v", file, e)
+		}
+	}()
+	return openData(file, mm), nil
+}
+
+// Close releases the memory mapping and file held by the index.
+// The index must not be used after Close.
+func (ix *Index) Close() error {
+	if ix == nil {
+		return nil
+	}
+	err := munmap(ix.data)
+	ix.data = mmapData{}
+	return err
+}
+
+// NumNames returns the number of file names in the index.
+func (ix *Index) NumNames() int {
+	return ix.numName
+}
+
+func openData(file string, mm mmapData) *Index {
 	ix := &Index{name: file, data: mm}
 	if len(mm.d) < len(trailerMagicV1) {
 		ix.corrupt()
@@ -657,6 +699,14 @@ func mmap(file string) mmapData {
 		log.Fatal(err)
 	}
 	return mmapFile(f)
+}
+
+func mmapFile(f *os.File) mmapData {
+	mm, err := mmapFileErr(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return mm
 }
 
 // TODO look in parent directories for index

@@ -5,33 +5,45 @@
 package index
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
 )
 
-func mmapFile(f *os.File) mmapData {
+func mmapFileErr(f *os.File) (mmapData, error) {
 	st, err := f.Stat()
 	if err != nil {
-		log.Fatal(err)
+		return mmapData{}, err
 	}
 	size := st.Size()
 	if int64(int(size+4095)) != size+4095 {
-		log.Fatalf("%s: too large for mmap", f.Name())
+		return mmapData{}, fmt.Errorf("%s: too large for mmap", f.Name())
 	}
 	if size == 0 {
-		return mmapData{f, nil}
+		return mmapData{f, nil}, nil
 	}
 	h, err := syscall.CreateFileMapping(syscall.Handle(f.Fd()), nil, syscall.PAGE_READONLY, uint32(size>>32), uint32(size), nil)
 	if err != nil {
-		log.Fatalf("CreateFileMapping %s: %v", f.Name(), err)
+		return mmapData{}, fmt.Errorf("CreateFileMapping %s: %v", f.Name(), err)
 	}
+	defer syscall.CloseHandle(h)
 
 	addr, err := syscall.MapViewOfFile(h, syscall.FILE_MAP_READ, 0, 0, 0)
 	if err != nil {
-		log.Fatalf("MapViewOfFile %s: %v", f.Name(), err)
+		return mmapData{}, fmt.Errorf("MapViewOfFile %s: %v", f.Name(), err)
 	}
-	data := (*[1 << 30]byte)(unsafe.Pointer(addr))
-	return mmapData{f, data[:size]}
+	data := unsafe.Slice((*byte)(unsafe.Pointer(addr)), size)
+	return mmapData{f, data}, nil
+}
+
+func munmap(m mmapData) error {
+	var err error
+	if m.d != nil {
+		err = syscall.UnmapViewOfFile(uintptr(unsafe.Pointer(&m.d[0])))
+	}
+	if m.f != nil {
+		m.f.Close()
+	}
+	return err
 }

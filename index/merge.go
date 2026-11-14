@@ -51,6 +51,8 @@ var writeVersion = 2
 func Merge(dst, src1, src2 string) {
 	ix1 := Open(src1)
 	ix2 := Open(src2)
+	defer ix1.Close()
+	defer ix2.Close()
 
 	// Build fileid maps.
 	var i1, i2, new int
@@ -127,7 +129,11 @@ func Merge(dst, src1, src2 string) {
 	// Merged list of paths.
 	pathData := ix.Offset()
 	last := MakePath("\xFF") // not a prefix of anything
-	writeVersion = 2
+	// Merge always writes version 2. Only assign when needed (in tests),
+	// so that concurrent merges don't race on the variable.
+	if writeVersion != 2 {
+		writeVersion = 2
+	}
 	paths := NewPathWriter(ix, nil, writeVersion, 0)
 	p1 := ix1.Roots()
 	p2 := ix2.Roots()
@@ -276,7 +282,10 @@ func Merge(dst, src1, src2 string) {
 		ix.WriteString(trailerMagicV2)
 	}
 	ix.Flush()
+	ix.close()
 
+	nameIndexFile.close()
+	postIndexFile.close()
 	os.Remove(nameIndexFile.name)
 	os.Remove(w.postIndexFile.name)
 }

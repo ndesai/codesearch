@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code Search</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='10' cy='10' r='6.5' fill='none' stroke='%231a73e8' stroke-width='2.5'/%3E%3Cpath d='M15 15l6 6' stroke='%231a73e8' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+<script>
+  // Apply the saved theme before first paint.
+  try { const t = localStorage.getItem('cs-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<header id="topbar" class="topbar">
+  <a href="/" class="logo" data-nav>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>
+    <span>Code Search</span>
+  </a>
+  <form id="topsearch" class="searchbox" role="search" autocomplete="off">
+    <svg class="sicon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>
+    <input id="q" name="q" type="text" spellcheck="false" placeholder="Search code, files and symbols" aria-label="Search">
+    <kbd class="hint">/</kbd>
+    <ul class="suggest" hidden></ul>
+  </form>
+  <div class="topright">
+    <span id="indexing" class="indexing" hidden></span>
+    <button id="helpbtn" class="iconbtn" title="Search help (?)" aria-label="Search help">?</button>
+    <button id="themebtn" class="iconbtn" title="Toggle theme" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+    </button>
+  </div>
+</header>
+<main id="app"></main>
+
+<dialog id="help">
+  <form method="dialog"><button class="close iconbtn" aria-label="Close">✕</button></form>
+  <h2>Search syntax</h2>
+  <table>
+    <tr><td><code>foo bar</code></td><td>Files containing both <i>foo</i> and <i>bar</i>. Each term is a regular expression.</td></tr>
+    <tr><td><code>"foo(bar"</code></td><td>Literal text (invalid regular expressions are also searched literally).</td></tr>
+    <tr><td><code>-foo</code></td><td>Exclude files containing <i>foo</i>.</td></tr>
+    <tr><td><code>file:\.cc$</code></td><td>File path matches a regular expression (also <code>f:</code>, <code>-file:</code>).</td></tr>
+    <tr><td><code>lang:java</code></td><td>Language: <code>c</code>, <code>c++</code>, <code>java</code>, <code>kotlin</code>, <code>go</code>, <code>py</code>, <code>rust</code>, <code>ts</code>, <code>bp</code>, <code>aidl</code>, … (also <code>-lang:</code>).</td></tr>
+    <tr><td><code>repo:aosp</code></td><td>Repository name (also <code>r:</code>, <code>-repo:</code>).</td></tr>
+    <tr><td><code>sym:Activity</code></td><td>Definitions of a symbol.</td></tr>
+    <tr><td><code>case:yes</code></td><td>Case-sensitive. By default, search is case-insensitive unless the query contains upper-case letters.</td></tr>
+  </table>
+  <h2>Code browsing</h2>
+  <table>
+    <tr><td>Click an identifier</td><td>Show its definitions and references.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+click</td><td>Jump straight to the definition.</td></tr>
+    <tr><td>Click a line number</td><td>Link to that line; <kbd>Shift</kbd>+click selects a range.</td></tr>
+  </table>
+  <h2>Keyboard shortcuts</h2>
+  <table>
+    <tr><td><kbd>/</kbd></td><td>Focus the search box</td></tr>
+    <tr><td><kbd>n</kbd> / <kbd>N</kbd></td><td>Next / previous match in file</td></tr>
+    <tr><td><kbd>t</kbd></td><td>Toggle the file tree</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Close the cross-reference panel</td></tr>
+    <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+  </table>
+</dialog>
+<div id="toast" class="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
