@@ -15,8 +15,8 @@ or, from a checkout:
 	go install ./cmd/...
 
 
-Web app quick start
--------------------
+Web app (ND Code Search) quick start
+------------------------------------
 
 1. Create a configuration file listing the folders to search:
 

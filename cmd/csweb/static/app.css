@@ -1,4 +1,4 @@
-/* Code Search. Colors are tokens on :root, redefined for dark mode. */
+/* ND Code Search. Colors are tokens on :root, redefined for dark mode. */
 :root {
   --bg: #ffffff;
   --bg-alt: #f8f9fa;
@@ -162,7 +162,9 @@ body.home .topbar { border-bottom-color: transparent; }
 .warn { color: var(--syn-pre); }
 .namehits { margin: 0 0 22px; }
 .namehits ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-.namehits li a { font: 13px var(--mono); display: inline-flex; gap: 8px; align-items: baseline; }
+.namehits li a { font: 13px var(--mono); display: inline-flex; gap: 8px; align-items: center; }
+.namehits .ico, .suggest .ico { width: 15px; height: 15px; flex: none; fill: var(--text-2); align-self: center; }
+.namehits .ico.dir, .suggest .ico.dir { fill: #f9ab00; }
 .repo-chip { font: 500 11px var(--sans); background: var(--chip); color: var(--chip-text); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
 .fpath .dir { color: var(--text-2); }
 .fpath .base { color: var(--link); font-weight: 600; }

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Csweb is a web interface for searching the repositories listed in a
-// codesearch configuration file.
+// Csweb serves ND Code Search, a web interface for searching the
+// repositories listed in a codesearch configuration file.
 //
 // Usage:
 //

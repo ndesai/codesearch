@@ -82,6 +82,7 @@ type LineMatch struct {
 type NameMatch struct {
 	Repo string `json:"repo"`
 	Path string `json:"path"`
+	Dir  bool   `json:"dir,omitempty"`
 }
 
 const maxLineLen = 1000
@@ -562,63 +563,14 @@ func score(f *FileMatch, q *Query) float64 {
 	return sc
 }
 
-// nameMatches finds files whose base name matches term.
+// nameMatches finds files and directories whose base name matches t.
 func (e *Engine) nameMatches(ctx context.Context, snaps []*snapshot, q *Query, t *Term, limit int) ([]*NameMatch, int) {
-	re, err := regexp.Compile("(?m)" + t.Pattern)
-	if err != nil {
-		return nil, 0
-	}
-	type cand struct {
-		repo, path string
-		rank       int
-	}
-	var all []cand
-	text := strings.ToLower(t.Text)
-	for _, s := range snaps {
-		for _, sh := range s.shards {
-			if ctx.Err() != nil {
-				break
-			}
-			names := sh.nameTable()
-			eachLine(re, names.blob, func(lo, hi int) bool {
-				p := string(names.blob[lo:hi])
-				base := path.Base(p)
-				if !t.Std.MatchString(base) || !pathMatch(q, p) {
-					return true
-				}
-				lb := strings.ToLower(base)
-				rank := 3
-				switch {
-				case strings.TrimSuffix(lb, path.Ext(lb)) == text || lb == text:
-					rank = 0
-				case strings.HasPrefix(lb, text):
-					rank = 1
-				case t.Literal || t.IsIdent():
-					rank = 2
-				}
-				all = append(all, cand{s.repo.Name, p, rank})
-				return len(all) < 100000
-			})
-		}
-	}
-	slices.SortFunc(all, func(a, b cand) int {
-		if a.rank != b.rank {
-			return a.rank - b.rank
-		}
-		if len(a.path) != len(b.path) {
-			return len(a.path) - len(b.path)
-		}
-		return strings.Compare(a.path, b.path)
-	})
-	var out []*NameMatch
-	for _, c := range all[:min(limit, len(all))] {
-		out = append(out, &NameMatch{Repo: c.repo, Path: c.path})
-	}
-	return out, len(all)
+	all := collectNames(ctx, snaps, q, t, true)
+	return topNames(all, limit), len(all)
 }
 
-// Suggest returns up to limit files whose names match the text typed so
-// far, for search-as-you-type.
+// Suggest returns up to limit files and directories whose names match
+// the text typed so far, for search-as-you-type.
 func (e *Engine) Suggest(ctx context.Context, text string, limit int) []*NameMatch {
 	q, err := ParseQuery(text)
 	if err != nil || len(q.Terms) == 0 {
@@ -636,18 +588,57 @@ func (e *Engine) Suggest(ctx context.Context, text string, limit int) []*NameMat
 			s.release()
 		}
 	}()
-	// For suggestions match the full path, so "core/Activity" works.
+	// Suggestions also accept matches anywhere in the path,
+	// so "core/Activity" works.
+	return topNames(collectNames(ctx, snaps, q, t, false), limit)
+}
+
+type nameCand struct {
+	repo, path string
+	dir        bool
+	rank       int
+}
+
+// collectNames finds the files and directories whose names match t.
+// Lower ranks are better: an exact name match, then a prefix match,
+// then a substring match, then a regexp match. If baseOnly is false,
+// files whose full path (but not base name) matches are included last.
+func collectNames(ctx context.Context, snaps []*snapshot, q *Query, t *Term, baseOnly bool) []nameCand {
 	re, err := regexp.Compile("(?m)" + t.Pattern)
 	if err != nil {
 		return nil
 	}
-	type cand struct {
-		repo, path string
-		rank       int
+	text := strings.ToLower(t.Text)
+	rank := func(name string) int {
+		lb := strings.ToLower(name)
+		switch {
+		case lb == text || strings.TrimSuffix(lb, path.Ext(lb)) == text:
+			return 0
+		case strings.HasPrefix(lb, text):
+			return 1
+		case strings.Contains(lb, text):
+			return 2
+		}
+		return 3
 	}
-	var all []cand
-	text = strings.ToLower(t.Text)
+	// Directories have no language, so a lang: filter rules them out.
+	dirs := len(q.Langs) == 0
+	dirOK := func(d string) bool {
+		for _, re := range q.Files {
+			if !re.MatchString(d) {
+				return false
+			}
+		}
+		for _, re := range q.NotFiles {
+			if re.MatchString(d) {
+				return false
+			}
+		}
+		return true
+	}
+	var all []nameCand
 	for _, s := range snaps {
+		seen := map[string]bool{} // directories already considered
 		for _, sh := range s.shards {
 			if ctx.Err() != nil {
 				break
@@ -655,29 +646,49 @@ func (e *Engine) Suggest(ctx context.Context, text string, limit int) []*NameMat
 			names := sh.nameTable()
 			eachLine(re, names.blob, func(lo, hi int) bool {
 				p := string(names.blob[lo:hi])
-				if !pathMatch(q, p) {
-					return true
+				if base := path.Base(p); t.Std.MatchString(base) {
+					if pathMatch(q, p) {
+						all = append(all, nameCand{s.repo.Name, p, false, rank(base)})
+					}
+				} else if !baseOnly && pathMatch(q, p) {
+					all = append(all, nameCand{s.repo.Name, p, false, 4})
 				}
-				lb := strings.ToLower(path.Base(p))
-				rank := 4
-				switch {
-				case strings.TrimSuffix(lb, path.Ext(lb)) == text || lb == text:
-					rank = 0
-				case strings.HasPrefix(lb, text):
-					rank = 1
-				case strings.Contains(lb, text):
-					rank = 2
-				case t.Std.MatchString(path.Base(p)):
-					rank = 3
+				// Directories containing this file whose names match.
+				for i := 0; dirs && i < len(p); i++ {
+					if p[i] != '/' {
+						continue
+					}
+					d := p[:i]
+					if seen[d] {
+						continue
+					}
+					seen[d] = true
+					if base := path.Base(d); t.Std.MatchString(base) && dirOK(d) {
+						all = append(all, nameCand{s.repo.Name, d, true, rank(base)})
+					}
 				}
-				all = append(all, cand{s.repo.Name, p, rank})
-				return len(all) < 50000
+				return len(all) < 100000
 			})
 		}
 	}
-	slices.SortFunc(all, func(a, b cand) int {
+	return all
+}
+
+// topNames returns the best limit candidates: by rank, then shorter
+// paths, with directories before files at equal rank and length.
+func topNames(all []nameCand, limit int) []*NameMatch {
+	slices.SortFunc(all, func(a, b nameCand) int {
 		if a.rank != b.rank {
 			return a.rank - b.rank
+		}
+		if da, db := strings.Count(a.path, "/"), strings.Count(b.path, "/"); da != db {
+			return da - db
+		}
+		if a.dir != b.dir {
+			if a.dir {
+				return -1
+			}
+			return 1
 		}
 		if len(a.path) != len(b.path) {
 			return len(a.path) - len(b.path)
@@ -686,7 +697,7 @@ func (e *Engine) Suggest(ctx context.Context, text string, limit int) []*NameMat
 	})
 	var out []*NameMatch
 	for _, c := range all[:min(limit, len(all))] {
-		out = append(out, &NameMatch{Repo: c.repo, Path: c.path})
+		out = append(out, &NameMatch{Repo: c.repo, Path: c.path, Dir: c.dir})
 	}
 	return out
 }

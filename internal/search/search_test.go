@@ -173,6 +173,26 @@ func TestSearch(t *testing.T) {
 	}
 }
 
+func TestFolderNameMatches(t *testing.T) {
+	e := newTestEngine(t)
+	// "tools" names a top-level folder but no file.
+	r := search(t, e, "tools")
+	if len(r.NameMatches) == 0 || !r.NameMatches[0].Dir || r.NameMatches[0].Path != "tools" {
+		t.Errorf("search tools: name matches %+v", r.NameMatches)
+	}
+	s := e.Suggest(context.Background(), "libs", 10)
+	if len(s) == 0 || !s[0].Dir || s[0].Path != "native/libs" {
+		t.Errorf("suggest libs: %+v", s)
+	}
+	// Directories have no language.
+	r = search(t, e, "tools lang:go")
+	for _, n := range r.NameMatches {
+		if n.Dir {
+			t.Errorf("lang: query returned folder %s", n.Path)
+		}
+	}
+}
+
 func TestSuggest(t *testing.T) {
 	e := newTestEngine(t)
 	s := e.Suggest(context.Background(), "activity", 10)

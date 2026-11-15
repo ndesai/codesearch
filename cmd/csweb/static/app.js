@@ -1,4 +1,4 @@
-// Code Search web UI. Plain JavaScript, no build step.
+// ND Code Search web UI. Plain JavaScript, no build step.
 'use strict';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -152,10 +152,10 @@ async function pollStatus() {
 
 function renderHome() {
   view = {kind: 'home'};
-  document.title = 'Code Search';
+  document.title = 'ND Code Search';
   app.innerHTML = `
     <div class="home-wrap">
-      <h1 class="home-title"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>Code Search</h1>
+      <h1 class="home-title"><svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>ND Code Search</h1>
       <form class="searchbox big" role="search" autocomplete="off">
         <svg class="sicon" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l6 6"/></svg>
         <input type="text" name="q" spellcheck="false" placeholder="Search code, files and symbols" aria-label="Search" autofocus>
@@ -214,7 +214,7 @@ function attachSearchBox(form, input) {
     list.innerHTML = items.map((f, i) => {
       if (f.all) return `<li class="searchall${i === sel ? ' sel' : ''}" data-i="${i}">${icons.search.replace('<svg', '<svg style="width:16px;height:16px;fill:currentColor;vertical-align:-3px"')} Search for <b>${esc(input.value)}</b></li>`;
       const j = f.path.lastIndexOf('/');
-      return `<li data-i="${i}" class="${i === sel ? 'sel' : ''}"><span class="repo-chip">${esc(f.repo)}</span><span class="base">${esc(f.path.slice(j + 1))}</span><span class="dir">${esc(f.path.slice(0, j + 1))}</span></li>`;
+      return `<li data-i="${i}" class="${i === sel ? 'sel' : ''}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}<span class="base">${esc(f.path.slice(j + 1))}${f.dir ? '/' : ''}</span><span class="dir">${esc(f.path.slice(0, j + 1))}</span></li>`;
     }).join('');
     list.hidden = false;
   };
@@ -269,7 +269,7 @@ const SNIP_LINES = 5;
 async function renderSearch(q) {
   view = {kind: 'search', q, page: 0};
   const v = view;
-  document.title = q + ' - Code Search';
+  document.title = q + ' - ND Code Search';
   if (!q) { app.innerHTML = '<div class="empty">Enter a query.</div>'; return; }
   app.innerHTML = '<div class="loading"><span class="spinner"></span>Searching…</div>';
   let r;
@@ -290,8 +290,8 @@ async function renderSearch(q) {
   else if (r.truncated) summary += ' · <span class="warn">showing the first results only; refine your query</span>';
   parts.push(`<div class="summary">${summary}</div>`);
   if (r.nameMatches && r.nameMatches.length) {
-    parts.push(`<div class="namehits"><div class="section-title">Files${r.numNameMatches > r.nameMatches.length ? ` <span class="muted" style="text-transform:none;letter-spacing:0">(${fmtNum(r.numNameMatches)}; <a href="${searchURL('file:' + q)}">see all</a>)</span>` : ''}</div><ul>` +
-      r.nameMatches.map(f => `<li><a href="${fileURL(f.repo, f.path)}"><span class="repo-chip">${esc(f.repo)}</span>${pathHTML(f.path)}</a></li>`).join('') +
+    parts.push(`<div class="namehits"><div class="section-title">Files and folders${r.numNameMatches > r.nameMatches.length ? ` <span class="muted" style="text-transform:none;letter-spacing:0">(${fmtNum(r.numNameMatches)}; <a href="${searchURL('file:' + q)}">see all</a>)</span>` : ''}</div><ul>` +
+      r.nameMatches.map(f => `<li><a href="${fileURL(f.repo, f.path)}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}${pathHTML(f.path + (f.dir ? '/' : ''))}</a></li>`).join('') +
       '</ul></div>');
     if (r.files.length) parts.push('<div class="section-title">Code</div>');
   }
@@ -388,7 +388,7 @@ async function renderFile(repo, path, q) {
   const prev = view;
   view = {kind: 'file', repo, path, q, xref: prev && prev.kind === 'file' ? prev.xref : null};
   const v = view;
-  document.title = (path ? path.split('/').pop() : repo) + ' - Code Search';
+  document.title = (path ? path.split('/').pop() : repo) + ' - ND Code Search';
   if (!sameRepo) {
     app.innerHTML = `<div class="fv${treeHidden ? ' notree' : ''}"><nav class="tree" aria-label="Files"></nav>
       <section class="fmain"><div class="fhead"></div><div class="fbody"><div class="codewrap"><div class="loading"><span class="spinner"></span>Loading…</div></div></div></section></div>`;
