@@ -43,6 +43,10 @@ max_file_size: 2MB
 #   name       a file or directory with this name anywhere ("*.min.js" too)
 #   /out       only the top-level "out" directory (patterns with a slash
 #              match the path from the repository root)
+#
+# Files ignored by .gitignore (and .git/info/exclude) are skipped too;
+# set use_gitignore: false to index them.
+# use_gitignore: true
 exclude:
   - "*.log"
   - "*.lock"

@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/codesearch/index"
 	"github.com/google/codesearch/internal/config"
+	"github.com/google/codesearch/internal/gitignore"
 )
 
 // comparePaths orders slash-separated relative paths the same way the
@@ -26,7 +28,9 @@ func comparePaths(a, b string) int {
 // parallel, which matters for very large trees on SSDs and network
 // file systems. Files larger than maxSize and empty files are omitted.
 // Errors reading individual directories are reported to logf and skipped.
-func walk(root string, excl *config.Matcher, maxSize int64, workers int, counter *atomic.Int64, logf func(string, ...any)) ([]FileInfo, error) {
+// If useGitignore is set, files ignored by .gitignore files (and
+// .git/info/exclude) in the tree are skipped too.
+func walk(root string, excl *config.Matcher, useGitignore bool, maxSize int64, workers int, counter *atomic.Int64, logf func(string, ...any)) ([]FileInfo, error) {
 	if _, err := os.Stat(root); err != nil {
 		return nil, err
 	}
@@ -37,8 +41,8 @@ func walk(root string, excl *config.Matcher, maxSize int64, workers int, counter
 	var (
 		mu      sync.Mutex
 		cond    = sync.NewCond(&mu)
-		queue   = []string{""} // relative directory paths still to read
-		pending = 1            // directories queued or being read
+		queue   = []walkDir{{}} // directories still to read
+		pending = 1             // directories queued or being read
 		results [][]FileInfo
 		wg      sync.WaitGroup
 	)
@@ -62,14 +66,19 @@ func walk(root string, excl *config.Matcher, maxSize int64, workers int, counter
 					cond.Broadcast()
 					return
 				}
-				dir := queue[len(queue)-1]
+				wd := queue[len(queue)-1]
 				queue = queue[:len(queue)-1]
 				mu.Unlock()
+				dir, ign := wd.rel, wd.ignore
 
-				var subdirs []string
-				ents, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+				var subdirs []walkDir
+				abs := filepath.Join(root, filepath.FromSlash(dir))
+				ents, err := os.ReadDir(abs)
 				if err != nil {
-					logf("%s: %v", filepath.Join(root, dir), err)
+					logf("%s: %v", abs, err)
+				}
+				if useGitignore {
+					ign = loadIgnores(abs, dir, ents, ign)
 				}
 				for _, e := range ents {
 					rel := e.Name()
@@ -81,8 +90,13 @@ func walk(root string, excl *config.Matcher, maxSize int64, workers int, counter
 					}
 					switch t := e.Type(); {
 					case t.IsDir():
-						subdirs = append(subdirs, rel)
+						if !ign.Ignored(rel, true) {
+							subdirs = append(subdirs, walkDir{rel, ign})
+						}
 					case t.IsRegular():
+						if ign.Ignored(rel, false) {
+							continue
+						}
 						info, err := e.Info()
 						if err != nil {
 							continue // removed since ReadDir
@@ -115,4 +129,48 @@ func walk(root string, excl *config.Matcher, maxSize int64, workers int, counter
 	}
 	slices.SortFunc(files, func(a, b FileInfo) int { return comparePaths(a.Path, b.Path) })
 	return files, nil
+}
+
+type walkDir struct {
+	rel    string
+	ignore gitignore.Stack
+}
+
+// loadIgnores adds the ignore files in the directory abs (relative path
+// rel) to the stack: .git/info/exclude for a repository root, then
+// .gitignore.
+func loadIgnores(abs, rel string, ents []os.DirEntry, s gitignore.Stack) gitignore.Stack {
+	for _, e := range ents {
+		switch {
+		case e.Name() == ".git" && e.IsDir():
+			if data, err := os.ReadFile(filepath.Join(abs, ".git", "info", "exclude")); err == nil {
+				s = s.Push(gitignore.Parse(rel, data))
+			}
+		case e.Name() == ".gitignore" && e.Type().IsRegular():
+			if data, err := os.ReadFile(filepath.Join(abs, ".gitignore")); err == nil {
+				s = s.Push(gitignore.Parse(rel, data))
+			}
+		}
+	}
+	return s
+}
+
+// IgnoreStack returns the ignore files that apply to entries of the
+// directory rel (slash-separated, relative to root).
+func IgnoreStack(root, rel string) gitignore.Stack {
+	var s gitignore.Stack
+	dir := ""
+	for {
+		abs := filepath.Join(root, filepath.FromSlash(dir))
+		ents, _ := os.ReadDir(abs)
+		s = loadIgnores(abs, dir, ents, s)
+		if dir == rel {
+			return s
+		}
+		next, _, _ := strings.Cut(strings.TrimPrefix(rel[len(dir):], "/"), "/")
+		if dir != "" {
+			next = dir + "/" + next
+		}
+		dir = next
+	}
 }

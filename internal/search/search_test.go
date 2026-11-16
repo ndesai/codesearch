@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/codesearch/internal/config"
 	"github.com/google/codesearch/internal/indexer"
+	"github.com/google/codesearch/internal/lang"
 )
 
 var testFiles = map[string]string{
@@ -136,6 +138,8 @@ func TestSearch(t *testing.T) {
 		{"oncreate", "aosp:core/java/android/app/Activity.java aosp:core/java/android/app/ActivityThread.java"},
 		{"onCreate case:yes file:Thread", "aosp:core/java/android/app/ActivityThread.java"},
 		{"oncreate case:yes", ""},
+		{"ONCREATE file:thread", "aosp:core/java/android/app/ActivityThread.java"},
+		{"ONCREATE case:auto", ""},
 		{"onCreate -file:Thread", "aosp:core/java/android/app/Activity.java"},
 		{"onCreate mWindow", "aosp:core/java/android/app/Activity.java"},
 		{"onCreate -mWindow", "aosp:core/java/android/app/ActivityThread.java"},
@@ -189,6 +193,31 @@ func TestFolderNameMatches(t *testing.T) {
 	for _, n := range r.NameMatches {
 		if n.Dir {
 			t.Errorf("lang: query returned folder %s", n.Path)
+		}
+	}
+}
+
+func TestFacets(t *testing.T) {
+	e := newTestEngine(t)
+	r := search(t, e, "package OR cc_library")
+	if r.Facets == nil || len(r.Facets.Repos) != 2 || r.Facets.Repos[0].Filter != `repo:^aosp$` {
+		t.Fatalf("repo facets: %+v", r.Facets)
+	}
+	// Every facet filter must parse and narrow the search to its count.
+	for _, list := range [][]Facet{r.Facets.Repos, r.Facets.Langs, r.Facets.Dirs} {
+		for _, f := range list {
+			r2 := search(t, e, "(package OR cc_library) "+f.Filter)
+			if r2.NumFiles != f.Count {
+				t.Errorf("facet %s (%s): %d files, want %d", f.Label, f.Filter, r2.NumFiles, f.Count)
+			}
+		}
+	}
+	// A lang: facet for every language we detect must round-trip.
+	for _, name := range []string{"x.h", "x.java", "x.go", "Android.bp", "x.py", "x.proto", "x.ts", "x.txt", "x.kt", "x.rs", "BUILD"} {
+		l := lang.Detect(name).Name
+		q, err := ParseQuery(langFilter(l))
+		if err != nil || !q.PathMatch(name) {
+			t.Errorf("lang facet for %s (%s): %v", name, langFilter(l), err)
 		}
 	}
 }
@@ -302,26 +331,91 @@ func TestParseQuery(t *testing.T) {
 	if len(q.Terms) != 2 || q.Terms[1].Text != "a b" || !q.Terms[1].Literal || q.Terms[0].FoldCase {
 		t.Errorf("terms: %+v %+v", q.Terms[0], q.Terms[1])
 	}
-	if len(q.NotTerms) != 1 || len(q.Files) != 1 || len(q.NotFiles) != 1 || len(q.Langs) != 1 || len(q.Repos) != 1 {
+	if len(q.AllTerms) != 3 || q.IsPositive(2) || len(q.Files) != 1 || len(q.Repos) != 1 || q.Simple {
 		t.Errorf("parsed: %+v", q)
 	}
-	if _, err := ParseQuery(`lang:nosuchlang`); err == nil {
-		t.Error("unknown language accepted")
-	}
-	if _, err := ParseQuery(`"unterminated`); err == nil {
-		t.Error("unterminated quote accepted")
+	for _, bad := range []string{`lang:nosuchlang`, `"unterminated`, `a OR`, `OR b`, `( OR )`, `NOT`} {
+		if _, err := ParseQuery(bad); err == nil {
+			t.Errorf("ParseQuery(%q) succeeded", bad)
+		}
 	}
 	q, _ = ParseQuery(`foo(`) // invalid regexp is searched literally
 	if !q.Terms[0].Literal {
 		t.Error("foo( not literal")
 	}
-	q, _ = ParseQuery(`\bFoo\w+`)
-	if q.Terms[0].FoldCase {
-		t.Error("upper-case term should be case-sensitive")
+	// Case-insensitive by default, even with upper-case letters.
+	q, _ = ParseQuery(`\bFoo\w+ file:Rect`)
+	if !q.Terms[0].FoldCase || !q.PathMatch("native/rect.h") {
+		t.Error("default should be case-insensitive")
 	}
-	q, _ = ParseQuery(`\w+\S`)
+	// case:auto: case-sensitive only for terms with upper-case letters.
+	q, _ = ParseQuery(`\bFoo\w+ bar case:auto`)
+	if q.Terms[0].FoldCase || !q.Terms[1].FoldCase {
+		t.Error("case:auto")
+	}
+	q, _ = ParseQuery(`\w+\S case:auto`)
 	if !q.Terms[0].FoldCase {
 		t.Error(`escapes like \S should not make a term case-sensitive`)
+	}
+	q, _ = ParseQuery(`Foo case:yes file:Rect`)
+	if q.Terms[0].FoldCase || q.PathMatch("native/rect.h") {
+		t.Error("case:yes should be case-sensitive")
+	}
+	// Parentheses without operators are part of the search text.
+	q, _ = ParseQuery(`func (b *Reader) Read`)
+	if len(q.Terms) != 4 || q.Terms[1].Text != "(b" || q.Terms[2].Text != "*Reader)" || !q.Simple {
+		t.Errorf("func (b *Reader): %d terms %q %q", len(q.Terms), q.Terms[1].Text, q.Terms[2].Text)
+	}
+	q, _ = ParseQuery(`(foo OR bar) baz`)
+	if len(q.Terms) != 3 || q.Expr.Op != OpAnd || q.Expr.Kids[0].Op != OpOr {
+		t.Errorf("(foo OR bar) baz: %+v", q.Expr)
+	}
+	q, _ = ParseQuery(`(a OR b`) // unmatched parentheses are search text
+	if q.Terms[0].Text != "(a" || q.Expr.Op != OpOr {
+		t.Errorf("(a OR b: %+v", q.Terms)
+	}
+	q, _ = ParseQuery(`( foo )`)
+	if len(q.Terms) != 1 || q.Terms[0].Text != "foo" {
+		t.Errorf("( foo ): %+v", q.Terms)
+	}
+	q, _ = ParseQuery(`"OR" or`) // quoted and lower-case "or" are search terms
+	if len(q.Terms) != 2 || !q.Simple {
+		t.Errorf(`"OR" or: %+v`, q.Terms)
+	}
+}
+
+func TestBooleanSearch(t *testing.T) {
+	e := newTestEngine(t)
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"onCreate OR NewModule", []string{"Activity.java", "ActivityThread.java", "build.go", "build_test.go"}},
+		{"(intersect OR NewModule) -file:test", []string{"Rect.cpp", "Rect.h", "build.go"}},
+		{"onCreate NOT mWindow", []string{"ActivityThread.java"}},
+		{"NOT (mWindow OR handleLaunch) onCreate", nil},
+		{"file:Rect.h OR file:Android.bp", []string{"Android.bp", "Rect.h"}},
+		{"(lang:go OR lang:bp) -file:test repo:aosp", []string{"Android.bp", "build.go"}},
+		{"NewModule AND file:test", []string{"build_test.go"}},
+		{"onCreate (file:Thread OR NOT file:app)", []string{"ActivityThread.java"}},
+	}
+	for _, tt := range tests {
+		r := search(t, e, tt.query)
+		var got []string
+		for _, f := range r.Files {
+			got = append(got, f.Path[strings.LastIndex(f.Path, "/")+1:])
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, tt.want) {
+			t.Errorf("%q: got %v, want %v", tt.query, got, tt.want)
+		}
+	}
+	// Lines from both sides of an OR are shown and highlighted.
+	r := search(t, e, "mWindow OR handleLaunch")
+	for _, f := range r.Files {
+		if len(f.Lines) == 0 || len(f.Lines[0].Ranges) == 0 {
+			t.Errorf("%s: no highlighted lines", f.Path)
+		}
 	}
 }
 

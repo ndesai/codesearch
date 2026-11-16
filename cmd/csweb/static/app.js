@@ -25,10 +25,15 @@ function fmtAgo(t) {
 
 function fileURL(repo, path, opts = {}) {
   let u = '/f/' + encodeURIComponent(repo) + (path ? '/' + encPath(path) : '');
-  if (opts.q) u += '?q=' + encodeURIComponent(opts.q);
+  const p = new URLSearchParams();
+  if (opts.q) p.set('q', opts.q);
+  if (opts.rev) p.set('rev', opts.rev);
+  if (opts.at && opts.at !== path) p.set('at', opts.at);
+  if (p.toString()) u += '?' + p.toString().replace(/\+/g, '%20');
   if (opts.line) u += '#L' + opts.line;
   return u;
 }
+const fmtDate = t => new Date(t * 1000).toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
 const searchURL = q => '/search?q=' + encodeURIComponent(q);
 
 // ---- API ----
@@ -115,7 +120,7 @@ function route() {
     const path = parts.join('/').replace(/\/+$/, '');
     const q = params.get('q') || '';
     if (q) qbox.value = q;
-    renderFile(repo, path, q);
+    renderFile(repo, path, q, params.get('rev') || '', params.get('at') || '');
   } else {
     qbox.value = '';
     renderHome();
@@ -297,11 +302,35 @@ async function renderSearch(q) {
   }
   parts.push('<div id="filelist"></div>');
   if (r.numFiles === 0 && !(r.nameMatches || []).length) {
-    parts.push(`<div class="empty">No matches for <code>${esc(q)}</code>.<br><br><span style="font-size:13px">Tips: terms are regular expressions and are case-insensitive unless they contain upper-case letters. Use quotes for literal text.</span></div>`);
+    parts.push(`<div class="empty">No matches for <code>${esc(q)}</code>.<br><br><span style="font-size:13px">Tips: terms are regular expressions and are case-insensitive (add <code>case:yes</code> to match case). Use quotes for literal text.</span></div>`);
   }
-  app.innerHTML = `<div class="results">${parts.join('')}</div>`;
+  const side = facetsHTML(r.facets, q);
+  app.innerHTML = `<div class="sres${side ? '' : ' nofacets'}">${side ? `<aside class="facets">${side}</aside>` : ''}<div class="results">${parts.join('')}</div></div>`;
   bindSnippets($('#filelist'), q);
   appendResults(r, q);
+}
+
+// ---- filter sidebar ----
+
+function hasFilter(q, f) { return (' ' + q + ' ').includes(' ' + f + ' '); }
+function toggleFilter(q, f) {
+  if (hasFilter(q, f)) return (' ' + q + ' ').replace(' ' + f + ' ', ' ').trim().replace(/\s+/g, ' ');
+  return q + ' ' + f;
+}
+
+function facetsHTML(fs, q) {
+  if (!fs) return '';
+  const section = (title, list, fmt) => {
+    list = list || [];
+    const active = list.some(f => hasFilter(q, f.filter));
+    if (list.length < 2 && !active) return '';
+    return `<div class="fsec"><div class="ftitle">${title}</div>` + list.map(f => {
+      const on = hasFilter(q, f.filter);
+      return `<a class="facet${on ? ' on' : ''}" href="${searchURL(toggleFilter(q, f.filter))}" title="${esc(on ? 'Remove ' : 'Add ') + esc(f.filter)}"><span class="fl">${on ? '✓ ' : ''}${fmt(f.label)}</span><span class="fc">${fmtNum(f.count)}</span></a>`;
+    }).join('') + '</div>';
+  };
+  return section('Repositories', fs.repos, esc) + section('Languages', fs.langs, esc) +
+    section('Directories', fs.dirs, l => `<span class="mono">${esc(l)}</span>`);
 }
 
 function appendResults(r, q) {
@@ -381,19 +410,23 @@ async function listDir(repo, path) {
   try { return await treeCache.get(key); } catch (e) { treeCache.delete(key); throw e; }
 }
 
-async function renderFile(repo, path, q) {
+async function renderFile(repo, path, q, rev, at) {
   // Reuse the layout (and tree) when moving within the same repo.
   let fv = $('.fv', app);
   const sameRepo = view && view.kind === 'file' && view.repo === repo && fv;
   const prev = view;
-  view = {kind: 'file', repo, path, q, xref: prev && prev.kind === 'file' ? prev.xref : null};
+  view = {kind: 'file', repo, path, q, rev, at, panel: prev && prev.kind === 'file' ? prev.panel : null};
   const v = view;
   document.title = (path ? path.split('/').pop() : repo) + ' - ND Code Search';
   if (!sameRepo) {
-    app.innerHTML = `<div class="fv${treeHidden ? ' notree' : ''}"><nav class="tree" aria-label="Files"></nav>
+    app.innerHTML = `<div class="fv${treeHidden ? ' notree' : ''}"><aside class="side">
+        <div class="sidetabs"><button data-tab="files">Files</button><button data-tab="outline" title="Outline (o)">Outline</button></div>
+        <nav class="tree" aria-label="Files"></nav><div class="outline" hidden></div></aside>
       <section class="fmain"><div class="fhead"></div><div class="fbody"><div class="codewrap"><div class="loading"><span class="spinner"></span>Loading…</div></div></div></section></div>`;
     fv = $('.fv', app);
     buildTree(repo);
+    $('.sidetabs', fv).onclick = e => { const b = e.target.closest('button'); if (b) setSideTab(b.dataset.tab); };
+    setSideTab(sideTab);
   }
   revealInTree(repo, path);
   const head = $('.fhead', fv), wrap = $('.codewrap', fv);
@@ -401,7 +434,9 @@ async function renderFile(repo, path, q) {
 
   let r;
   try {
-    r = await api('file', {repo, path, q, readme: 1}, 'file');
+    const params = {repo, path, q, readme: 1};
+    if (rev) Object.assign(params, {rev, at});
+    r = await api('file', params, 'file');
   } catch (e) {
     if (isAbort(e)) return;
     if (view === v) wrap.innerHTML = `<div class="notice">${esc(e.message)}</div>`;
@@ -417,16 +452,20 @@ async function renderFile(repo, path, q) {
     const rows = r.entries.map(e => `<tr class="${e.excluded ? 'excluded' : ''}"><td><a href="${fileURL(repo, (path ? path + '/' : '') + e.name)}">${e.dir ? icons.dir : icons.file}${esc(e.name)}</a></td><td class="size">${e.dir ? '' : fmtBytes(e.size)}</td></tr>`).join('');
     const readme = r.readme ? `<div class="readme"><h3>${esc(r.readme.name)}</h3>${codeHTML(r.readme.lines)}</div>` : '';
     wrap.innerHTML = `<div class="dirlist"><table>${up}${rows}</table></div>${readme}`;
-    restoreXref();
+    renderOutline(null);
+    restorePanel();
     return;
   }
 
   const nlines = r.lines ? r.lines.length : 0;
   head.innerHTML = crumbsHTML(repo, path) +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
+    (rev ? `<span class="revbanner">Version <code>${esc(rev.slice(0, 10))}</code> · <a href="${fileURL(repo, path)}">Current version</a></span>` : '') +
     `<span class="findnav" hidden></span>` +
     `<span class="factions">
-      <button class="iconbtn" data-act="tree" title="Toggle file tree (t)">${icons.tree}</button>
+      ${r.git ? `<button class="tbtn" data-act="blame" title="Show who last changed each line (b)">Blame</button>
+      <button class="tbtn" data-act="history" title="Show the file's history (h)">History</button>` : ''}
+      <button class="iconbtn" data-act="tree" title="Toggle sidebar (t)">${icons.tree}</button>
       <button class="iconbtn" data-act="copy" title="Copy path">${icons.copy}</button>
       <a class="iconbtn" href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank" title="Raw file">${icons.raw}</a>
     </span>`;
@@ -435,6 +474,8 @@ async function renderFile(repo, path, q) {
     if (!b) return;
     if (b.dataset.act === 'copy') { navigator.clipboard?.writeText(path).then(() => toast('Path copied')); }
     if (b.dataset.act === 'tree') toggleTree();
+    if (b.dataset.act === 'blame') toggleBlame();
+    if (b.dataset.act === 'history') showHistory();
   };
 
   if (r.tooLarge) wrap.innerHTML = `<div class="notice">This file is too large to display (${fmtBytes(r.size)}). <a href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank">View raw</a></div>`;
@@ -443,9 +484,11 @@ async function renderFile(repo, path, q) {
   else {
     wrap.innerHTML = codeHTML(r.lines, true);
     setupFind(head, wrap, q);
+    if (blameOn && r.git) toggleBlame(true);
   }
+  renderOutline(r.outline);
   onHash(true);
-  restoreXref();
+  restorePanel();
 }
 
 function codeHTML(lines, clickable) {
@@ -657,9 +700,11 @@ function highlightSym(word) {
   for (const s of $$('.codewrap .code .src span', app)) if (s.textContent === word) s.classList.add('symhl');
 }
 
-async function showXref(sym, repo, path, line, jump) {
+// ensurePanel returns the bottom panel of the file view, creating it if
+// needed. It shows cross references, file history or a commit.
+function ensurePanel() {
   const fmain = $('.fmain', app);
-  if (!fmain) return;
+  if (!fmain) return null;
   let panel = $('.xref', fmain);
   if (!panel) {
     panel = document.createElement('div');
@@ -667,22 +712,32 @@ async function showXref(sym, repo, path, line, jump) {
     panel.innerHTML = '<div class="drag"></div><div class="xref-head"></div><div class="xref-body"></div>';
     $('.fbody', fmain).append(panel);
     setupDrag(panel);
+    const savedH = sessionStorage.getItem('cs-xref-h');
+    if (savedH) panel.style.height = savedH;
   }
-  const savedH = sessionStorage.getItem('cs-xref-h');
-  if (savedH) panel.style.height = savedH;
-  const head = $('.xref-head', panel), body = $('.xref-body', panel);
-  head.innerHTML = `<span class="sym">${esc(sym)}</span><span class="counts"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span></span><button class="iconbtn" title="Close (Esc)">✕</button>`;
-  $('button', head).onclick = closeXref;
+  return panel;
+}
+
+function panelLoading(panel, title) {
+  $('.xref-head', panel).innerHTML = `<span class="sym">${title}</span><span class="counts"><span class="spinner" style="display:inline-block;vertical-align:-2px"></span></span><button class="iconbtn" title="Close (Esc)">✕</button>`;
+  $('.xref-head button', panel).onclick = closePanel;
+}
+
+async function showXref(sym, repo, path, line, jump) {
+  const panel = ensurePanel();
+  if (!panel) return;
+  const body = $('.xref-body', panel);
+  panelLoading(panel, esc(sym));
   let r;
   try {
     r = await api('xref', {sym, repo, path}, 'xref');
   } catch (e) {
     if (isAbort(e)) return;
     body.innerHTML = `<div class="error">${esc(e.message)}</div>`;
-    $('.counts', head).textContent = '';
+    $('.xref-head .counts', panel).textContent = '';
     return;
   }
-  view.xref = {sym, data: r, from: {repo, path, line}};
+  view.panel = {kind: 'xref', sym, data: r, from: {repo, path, line}};
   if (jump) {
     const d = (r.defs || []).find(d => !(d.repo === repo && d.path === path && d.line === line)) || (r.defs || [])[0];
     if (d) {
@@ -691,7 +746,7 @@ async function showXref(sym, repo, path, line, jump) {
     }
     toast('No definition found for ' + sym);
   }
-  renderXref(panel, view.xref);
+  renderXref(panel, view.panel);
 }
 
 function renderXref(panel, x) {
@@ -701,7 +756,7 @@ function renderXref(panel, x) {
     <span class="counts">${nd} definition${nd === 1 ? '' : 's'} · ${fmtNum(r.numRefs)} reference${r.numRefs === 1 ? '' : 's'} in ${fmtNum(r.numFiles)} file${r.numFiles === 1 ? '' : 's'}${r.truncated ? ' (partial)' : ''} · ${r.elapsed.toFixed(2)} s</span>
     <a href="${searchURL('\\b' + r.symbol + '\\b case:yes')}" style="font-size:12px;margin-left:8px">Search</a>
     <button class="iconbtn" title="Close (Esc)">✕</button>`;
-  $('button', head).onclick = closeXref;
+  $('button', head).onclick = closePanel;
   let html = '';
   if (nd) {
     html += '<h4>Definitions</h4><div class="fr defs"><table class="snip">' + r.defs.map(d => {
@@ -722,27 +777,22 @@ function renderXref(panel, x) {
   };
 }
 
-function restoreXref() {
-  const x = view.xref;
-  if (!x) return;
-  const fmain = $('.fmain', app);
-  let panel = $('.xref', fmain);
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.className = 'xref';
-    panel.innerHTML = '<div class="drag"></div><div class="xref-head"></div><div class="xref-body"></div>';
-    $('.fbody', fmain).append(panel);
-    setupDrag(panel);
-    const savedH = sessionStorage.getItem('cs-xref-h');
-    if (savedH) panel.style.height = savedH;
-  }
-  renderXref(panel, x);
-  highlightSym(x.sym);
+// restorePanel re-renders the bottom panel after navigating to another
+// file. Cross references stay open; history and commits belong to a file.
+function restorePanel() {
+  const p = view.panel;
+  if (!p) return;
+  if (p.kind !== 'xref' && (p.repo !== view.repo || p.path !== view.path)) { closePanel(); return; }
+  const panel = ensurePanel();
+  if (!panel) return;
+  if (p.kind === 'xref') { renderXref(panel, p); highlightSym(p.sym); }
+  else if (p.kind === 'history') renderHistory(panel, p);
+  else if (p.kind === 'commit') renderCommit(panel, p);
 }
 
-function closeXref() {
+function closePanel() {
   $('.xref', app)?.remove();
-  if (view) view.xref = null;
+  if (view) view.panel = null;
   highlightSym(null);
 }
 
@@ -766,6 +816,249 @@ function setupDrag(panel) {
   });
 }
 
+// ---- keyboard result navigation (j / k) ----
+
+function moveCursor(d) {
+  const rows = $$('#filelist tr.row');
+  if (!rows.length) return;
+  rows[view.cursor]?.classList.remove('kcur');
+  view.cursor = Math.max(0, Math.min(rows.length - 1, (view.cursor ?? -1) + d));
+  const row = rows[view.cursor];
+  row.classList.add('kcur');
+  row.scrollIntoView({block: 'nearest'});
+}
+
+function openCursor() {
+  const row = $$('#filelist tr.row')[view.cursor];
+  if (row) navigate(row.dataset.href);
+}
+
+// ---- sidebar: files / outline ----
+
+let sideTab = (() => { try { return localStorage.getItem('cs-side') || 'files'; } catch (e) { return 'files'; } })();
+
+function setSideTab(tab, focus) {
+  sideTab = tab;
+  try { localStorage.setItem('cs-side', tab); } catch (e) {}
+  const fv = $('.fv', app);
+  if (!fv) return;
+  if (focus && treeHidden) toggleTree();
+  $$('.sidetabs button', fv).forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  $('.tree', fv).hidden = tab !== 'files';
+  $('.outline', fv).hidden = tab !== 'outline';
+  if (focus && tab === 'outline') $('.outline input', fv)?.focus();
+}
+
+const kindLetter = {class: 'C', struct: 'S', interface: 'I', enum: 'E', trait: 'T', protocol: 'P', type: 'T', typealias: 'T',
+  func: 'f', method: 'm', module: 'M', namespace: 'N', object: 'O', message: 'M', service: 'S', impl: 'i', name: 'n', target: 't'};
+
+function renderOutline(syms) {
+  const el = $('.fv .outline', app);
+  if (!el) return;
+  view.outline = syms || [];
+  if (!syms || !syms.length) {
+    el.innerHTML = `<div class="muted" style="padding:12px 16px;font-size:13px">${syms ? 'No symbols found in this file.' : 'Open a file to see its outline.'}</div>`;
+    return;
+  }
+  el.innerHTML = `<input type="text" placeholder="Filter symbols" spellcheck="false" aria-label="Filter symbols"><ul>` +
+    syms.map((s, i) => {
+      const k = s.kind.startsWith('h') && s.kind.length === 2 ? '#' : (kindLetter[s.kind] || s.kind[0]);
+      return `<li><a class="osym k-${esc(s.kind)}" href="#L${s.line}" data-i="${i}" style="padding-left:${10 + s.depth * 14}px" title="${esc(s.kind)} · line ${s.line}"><span class="okind">${esc(k)}</span><span class="oname">${esc(s.name)}</span></a></li>`;
+    }).join('') + '</ul>';
+  const input = $('input', el);
+  input.oninput = () => {
+    const f = input.value.toLowerCase();
+    $$('li', el).forEach((li, i) => li.hidden = f && !syms[i].name.toLowerCase().includes(f));
+  };
+  input.onkeydown = e => {
+    if (e.key === 'Enter') { const a = $$('li:not([hidden]) a', el)[0]; if (a) a.click(); }
+    if (e.key === 'Escape') input.blur();
+  };
+  const wrap = $('.codewrap', app);
+  wrap.onscroll = () => {
+    if (wrap._raf) return;
+    wrap._raf = requestAnimationFrame(() => { wrap._raf = 0; syncOutline(); });
+  };
+  syncOutline();
+}
+
+// syncOutline marks the outline entry for the code at the top of the view.
+function syncOutline() {
+  const el = $('.fv .outline', app), wrap = $('.codewrap', app), first = $('#L1');
+  if (!el || !wrap || !first || !view.outline || !view.outline.length) return;
+  const top = Math.floor(wrap.scrollTop / first.offsetHeight) + 2;
+  let cur = -1;
+  for (let i = 0; i < view.outline.length && view.outline[i].line <= top; i++) cur = i;
+  $$('a.cur', el).forEach(a => a.classList.remove('cur'));
+  const a = $(`a[data-i="${cur}"]`, el);
+  if (a) {
+    a.classList.add('cur');
+    if (!el.hidden) {
+      const r = a.getBoundingClientRect(), er = el.getBoundingClientRect();
+      if (r.top < er.top + 40 || r.bottom > er.bottom) a.scrollIntoView({block: 'nearest'});
+    }
+  }
+}
+
+// ---- git: blame ----
+
+let blameOn = false;
+
+async function toggleBlame(restore) {
+  const code = $('.codewrap .code', app);
+  const btn = $('.fhead [data-act="blame"]', app);
+  if (!code) return;
+  if (code.classList.contains('blame-on') && !restore) {
+    code.classList.remove('blame-on');
+    $$('.bl', code).forEach(e => e.remove());
+    btn?.classList.remove('on');
+    blameOn = false;
+    return;
+  }
+  blameOn = true;
+  btn?.classList.add('on', 'busy');
+  const v = view;
+  let r;
+  try {
+    const params = {repo: v.repo, path: v.path};
+    if (v.rev) params.rev = v.rev;
+    r = await api('blame', params, 'blame');
+  } catch (e) {
+    if (!isAbort(e)) { toast('Blame: ' + e.message); btn?.classList.remove('on'); blameOn = false; }
+    return;
+  } finally {
+    btn?.classList.remove('busy');
+  }
+  if (view !== v || code.classList.contains('blame-on')) return;
+  const times = r.commits.map(c => c.time).filter(Boolean);
+  const lo = Math.min(...times), hi = Math.max(...times);
+  const lines = $$('.line', code);
+  for (let i = 0; i < lines.length && i < r.lines.length; i++) {
+    const ci = r.lines[i], c = r.commits[ci] || {};
+    const start = i === 0 || r.lines[i - 1] !== ci;
+    const span = document.createElement('span');
+    span.className = 'bl' + (start ? ' start' : '');
+    span.style.setProperty('--age', hi > lo && c.time ? ((c.time - lo) / (hi - lo)).toFixed(2) : 1);
+    if (start) {
+      span.title = `${c.summary || ''}\n${c.author || ''}, ${c.time ? new Date(c.time * 1000).toLocaleString() : ''}`;
+      span.innerHTML = c.hash
+        ? `<a class="bh" data-hash="${esc(c.hash)}">${esc(c.hash.slice(0, 7))}</a><span class="ba">${esc(c.author)}</span><span class="bd">${fmtDate(c.time)}</span>`
+        : `<span class="ba">${esc(c.author || '')}</span>`;
+    }
+    lines[i].insertBefore(span, lines[i].firstChild);
+  }
+  code.classList.add('blame-on');
+}
+
+document.addEventListener('click', e => {
+  const h = e.target.closest('.code .bl .bh');
+  if (h) { e.preventDefault(); showCommit(h.dataset.hash, view.at || view.path); }
+});
+
+// ---- git: history and commits ----
+
+async function showHistory() {
+  const panel = ensurePanel();
+  if (!panel) return;
+  const v = view;
+  panelLoading(panel, 'History');
+  let r;
+  try {
+    r = await api('history', {repo: v.repo, path: v.path}, 'panel');
+  } catch (e) {
+    if (!isAbort(e)) $('.xref-body', panel).innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    return;
+  }
+  if (view !== v) return;
+  view.panel = {kind: 'history', repo: v.repo, path: v.path, data: r};
+  renderHistory(panel, view.panel);
+}
+
+function renderHistory(panel, p) {
+  const r = p.data, n = r.commits.length;
+  $('.xref-head', panel).innerHTML = `<span class="sym">History</span><span class="counts">${esc(p.path.split('/').pop())} · ${n}${n >= 200 ? '+' : ''} commit${n === 1 ? '' : 's'}</span><button class="iconbtn" title="Close (Esc)">✕</button>`;
+  $('.xref-head button', panel).onclick = closePanel;
+  const body = $('.xref-body', panel);
+  if (!n) { body.innerHTML = '<div class="muted" style="padding:12px 16px">No commits found for this file.</div>'; return; }
+  body.innerHTML = '<table class="hist">' + r.commits.map((c, i) => {
+    const cur = view.rev && c.hash.startsWith(view.rev);
+    return `<tr class="hrow${cur ? ' here' : ''}" data-i="${i}">
+      <td class="hd">${fmtDate(c.time)}</td><td class="ha" title="${esc(c.email)}">${esc(c.author)}</td>
+      <td class="hs">${esc(c.subject)}${c.path !== r.path ? ` <span class="muted">(${esc(c.path)})</span>` : ''}</td>
+      <td class="hh"><a href="${fileURL(view.repo, view.path, {rev: c.hash, at: c.path})}" title="View the file at this commit"><code>${esc(c.hash.slice(0, 8))}</code></a></td></tr>`;
+  }).join('') + '</table>';
+  body.onclick = e => {
+    const row = e.target.closest('tr.hrow');
+    if (!row || e.target.closest('a')) return;
+    const c = r.commits[+row.dataset.i];
+    showCommit(c.hash, c.path, p);
+  };
+}
+
+async function showCommit(hash, at, back) {
+  const panel = ensurePanel();
+  if (!panel) return;
+  const v = view;
+  panelLoading(panel, `<code>${esc(hash.slice(0, 8))}</code>`);
+  let r;
+  try {
+    r = await api('commit', {repo: v.repo, path: v.path, hash, at: at || ''}, 'panel');
+  } catch (e) {
+    if (!isAbort(e)) $('.xref-body', panel).innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    return;
+  }
+  if (view !== v) return;
+  view.panel = {kind: 'commit', repo: v.repo, path: v.path, hash, at, data: r, back: back || null};
+  renderCommit(panel, view.panel);
+}
+
+function renderCommit(panel, p) {
+  const r = p.data;
+  const subject = r.message.split('\n')[0];
+  $('.xref-head', panel).innerHTML = (p.back ? '<button class="tbtn" data-back="1" title="Back to history">← History</button>' : '') +
+    `<span class="sym"><code>${esc(r.hash.slice(0, 10))}</code></span><span class="counts">${esc(subject)}</span><button class="iconbtn" title="Close (Esc)">✕</button>`;
+  $('.xref-head .iconbtn', panel).onclick = closePanel;
+  const backBtn = $('.xref-head [data-back]', panel);
+  if (backBtn) backBtn.onclick = () => { view.panel = p.back; renderHistory(panel, p.back); };
+  const rest = r.message.slice(subject.length).trim();
+  let html = `<div class="cmeta"><b>${esc(r.author)}</b> &lt;${esc(r.email)}&gt; · ${new Date(r.time * 1000).toLocaleString()}
+    ${r.parents.length ? ' · parent ' + r.parents.map(h => `<a href="#" data-commit="${esc(h)}"><code>${esc(h.slice(0, 8))}</code></a>`).join(', ') : ''}
+    · <a href="${fileURL(view.repo, view.path, {rev: r.hash, at: p.at})}">View file at this commit</a>
+    · <a href="#" data-all="1">${p.all ? 'Show only this file' : 'Show all changed files'}</a>
+    ${rest ? `<pre class="cmsg">${esc(rest)}</pre>` : ''}</div>`;
+  if (!r.diff.length) html += '<div class="muted" style="padding:8px 16px">No changes to this file in this commit.</div>';
+  else {
+    html += '<table class="diff">' + r.diff.map(d => {
+      switch (d.kind) {
+        case 'f': return `<tr class="d-file"><td colspan="3">${d.html}</td></tr>`;
+        case 'i': return `<tr class="d-info"><td colspan="3">${d.html}</td></tr>`;
+        case '@': return `<tr class="d-hunk"><td colspan="3">${d.html}</td></tr>`;
+      }
+      const cls = d.kind === '+' ? 'd-add' : d.kind === '-' ? 'd-del' : 'd-ctx';
+      return `<tr class="${cls}"><td class="dn">${d.old || ''}</td><td class="dn">${d.new || ''}</td><td class="code"><span class="dk">${d.kind}</span>${d.html}</td></tr>`;
+    }).join('') + '</table>';
+    if (r.truncated) html += '<div class="muted" style="padding:8px 16px">Diff truncated.</div>';
+  }
+  const body = $('.xref-body', panel);
+  body.innerHTML = html;
+  body.scrollTop = 0;
+  body.onclick = async e => {
+    const c = e.target.closest('[data-commit]');
+    if (c) { e.preventDefault(); showCommit(c.dataset.commit, p.at, p.back); return; }
+    if (e.target.closest('[data-all]')) {
+      e.preventDefault();
+      const all = !p.all;
+      try {
+        const params = {repo: view.repo, path: view.path, hash: r.hash, at: p.at || ''};
+        if (all) params.all = 1;
+        p.data = await api('commit', params, 'panel');
+        p.all = all;
+        renderCommit(panel, p);
+      } catch (err) { if (!isAbort(err)) toast(err.message); }
+    }
+  };
+}
+
 // ---- keyboard ----
 
 document.addEventListener('keydown', e => {
@@ -774,8 +1067,13 @@ document.addEventListener('keydown', e => {
   const input = document.body.classList.contains('home') ? $('#app input') : qbox;
   if (e.key === '/') { e.preventDefault(); input.focus(); input.select(); }
   else if (e.key === '?') { $('#help').showModal(); }
-  else if (e.key === 'Escape') { closeXref(); }
+  else if (e.key === 'Escape') { closePanel(); }
   else if (e.key === 't' && view && view.kind === 'file') { toggleTree(); }
+  else if ((e.key === 'j' || e.key === 'k') && view && view.kind === 'search') { e.preventDefault(); moveCursor(e.key === 'j' ? 1 : -1); }
+  else if ((e.key === 'Enter' || e.key === 'o') && view && view.kind === 'search' && view.cursor >= 0) { openCursor(); }
+  else if (e.key === 'b' && view && view.kind === 'file' && view.data && view.data.git) { toggleBlame(); }
+  else if (e.key === 'h' && view && view.kind === 'file' && view.data && view.data.git) { showHistory(); }
+  else if (e.key === 'o' && view && view.kind === 'file') { e.preventDefault(); setSideTab('outline', true); }
   else if ((e.key === 'n' || e.key === 'N') && view && view.marks) { gotoMark(e.key === 'n' ? 1 : -1); }
 });
 

@@ -294,7 +294,7 @@ func updateRepo(cfg *config.Config, repo *config.Repo, opts Options) (res *Resul
 		st.ToIndex.Store(0)
 		walked = &st.Walked
 	}
-	files, err := walk(repo.Path, repo.Excludes, int64(cfg.MaxFileSize), max(8, runtime.NumCPU()), walked, func(f string, a ...any) {
+	files, err := walk(repo.Path, repo.Excludes, cfg.Gitignore(), int64(cfg.MaxFileSize), max(8, runtime.NumCPU()), walked, func(f string, a ...any) {
 		if opts.Verbose {
 			logf(f, a...)
 		}

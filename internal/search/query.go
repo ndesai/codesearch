@@ -8,9 +8,11 @@ import (
 	"fmt"
 	stdregexp "regexp"
 	"regexp/syntax"
+	"slices"
 	"strings"
 	"unicode"
 
+	"github.com/google/codesearch/index"
 	"github.com/google/codesearch/internal/lang"
 )
 
@@ -19,29 +21,44 @@ import (
 // Syntax (modeled on Google's Code Search):
 //
 //	foo bar         files containing both foo and bar (each a regexp)
+//	foo OR bar      files containing either (AND is also accepted)
+//	-foo, NOT foo   files not containing foo
+//	(a OR b) c      grouping
 //	"foo bar"       the literal string "foo bar"
-//	-foo            files not containing foo
-//	file:\.go$      path matches regexp (also f:, path:)
-//	-file:test      path does not match regexp
+//	file:\.go$      path matches regexp (also f:, path:; -file: excludes)
 //	lang:java       language (also l:, -lang:)
 //	repo:aosp       repository name matches regexp (also r:, -repo:)
-//	case:yes        case-sensitive (case:no for insensitive; default is
-//	                case-insensitive unless the term has an upper-case letter)
+//	case:yes        case-sensitive (the default is case-insensitive;
+//	                case:auto is case-sensitive only for terms with an
+//	                upper-case letter)
 //	sym:Foo         definitions of the symbol Foo
 //
-// A term that is not a valid regular expression is searched literally.
+// file: and lang: can be combined with OR and NOT like content terms.
+// repo:, case: and sym: apply to the whole query.
+// Parentheses group only when the group contains an operator (or the
+// parenthesis stands alone), so code like "foo(x)" is still searched
+// as written. A term that is not a valid regular expression is searched
+// literally.
 type Query struct {
-	Raw      string
-	Terms    []*Term // content terms that must all appear in a file
-	NotTerms []*Term // content terms that must not appear
+	Raw string
+	// Expr is the boolean expression over content and path terms,
+	// or nil if every file matches.
+	Expr *Node
+	// Terms are the content terms that count toward a match (those not
+	// under NOT), used for showing and highlighting matching lines.
+	Terms []*Term
+	// AllTerms are the content terms in Expr, indexed by Node.Term.
+	AllTerms []*Term
+	// Files are path regexps that every matching file must match.
 	Files    []*stdregexp.Regexp
-	NotFiles []*stdregexp.Regexp
-	Langs    []*lang.Filter
-	NotLangs []*lang.Filter
 	Repos    []*stdregexp.Regexp
 	NotRepos []*stdregexp.Regexp
-	Case     string // "yes", "no" or "" (auto)
+	Case     string // "yes", "auto", or "" or "no" (case-insensitive)
 	Symbol   string // sym: query
+	// Simple reports whether Expr is a conjunction without OR or NOT.
+	Simple bool
+
+	positive []bool // positive[i] reports whether AllTerms[i] is in Terms
 }
 
 // A Term is one content pattern.
@@ -64,6 +81,154 @@ var (
 	escapeRE = stdregexp.MustCompile(`\\[A-Za-z]`)
 )
 
+// An Op is a query expression operator.
+type Op int
+
+const (
+	OpAnd Op = iota
+	OpOr
+	OpNot
+	OpTerm // content term AllTerms[Term]
+	OpFile // path matches File
+	OpLang // path is in language Lang
+)
+
+// A Node is a query expression.
+type Node struct {
+	Op   Op
+	Kids []*Node
+	Term int
+	File *stdregexp.Regexp
+	Lang *lang.Filter
+}
+
+// tri is a three-valued truth value, used to evaluate path filters
+// before file contents are known.
+type tri int8
+
+const (
+	tFalse tri = iota
+	tTrue
+	tUnknown
+)
+
+func (n *Node) eval(path string, term func(int) tri) tri {
+	switch n.Op {
+	case OpAnd:
+		v := tTrue
+		for _, k := range n.Kids {
+			switch k.eval(path, term) {
+			case tFalse:
+				return tFalse
+			case tUnknown:
+				v = tUnknown
+			}
+		}
+		return v
+	case OpOr:
+		v := tFalse
+		for _, k := range n.Kids {
+			switch k.eval(path, term) {
+			case tTrue:
+				return tTrue
+			case tUnknown:
+				v = tUnknown
+			}
+		}
+		return v
+	case OpNot:
+		switch n.Kids[0].eval(path, term) {
+		case tTrue:
+			return tFalse
+		case tFalse:
+			return tTrue
+		}
+		return tUnknown
+	case OpTerm:
+		return term(n.Term)
+	case OpFile:
+		if n.File.MatchString(path) {
+			return tTrue
+		}
+		return tFalse
+	case OpLang:
+		if n.Lang.Match(path) {
+			return tTrue
+		}
+		return tFalse
+	}
+	return tUnknown
+}
+
+// PathMatch reports whether a file with the given path could match the
+// query, considering only the path filters.
+func (q *Query) PathMatch(path string) bool {
+	if q.Expr == nil {
+		return true
+	}
+	return q.Expr.eval(path, func(int) tri { return tUnknown }) != tFalse
+}
+
+// Match reports whether a file matches, given which content terms
+// occur in it (has(i) for AllTerms[i]).
+func (q *Query) Match(path string, has func(i int) bool) bool {
+	if q.Expr == nil {
+		return true
+	}
+	return q.Expr.eval(path, func(i int) tri {
+		if has(i) {
+			return tTrue
+		}
+		return tFalse
+	}) == tTrue
+}
+
+// IsPositive reports whether AllTerms[i] is one of q.Terms.
+func (q *Query) IsPositive(i int) bool { return q.positive[i] }
+
+// IndexQuery returns the trigram query for the expression, given the
+// syntax trees of AllTerms (as compiled by the caller).
+func (q *Query) IndexQuery(terms []*syntax.Regexp) *index.Query {
+	if q.Expr == nil {
+		return &index.Query{Op: index.QAll}
+	}
+	return indexQuery(q.Expr, terms)
+}
+
+func indexQuery(n *Node, terms []*syntax.Regexp) *index.Query {
+	all := &index.Query{Op: index.QAll}
+	switch n.Op {
+	case OpTerm:
+		return index.RegexpQuery(terms[n.Term])
+	case OpAnd:
+		var subs []*index.Query
+		for _, k := range n.Kids {
+			if sq := indexQuery(k, terms); sq.Op != index.QAll {
+				subs = append(subs, sq)
+			}
+		}
+		switch len(subs) {
+		case 0:
+			return all
+		case 1:
+			return subs[0]
+		}
+		return &index.Query{Op: index.QAnd, Sub: subs}
+	case OpOr:
+		var subs []*index.Query
+		for _, k := range n.Kids {
+			sq := indexQuery(k, terms)
+			if sq.Op == index.QAll {
+				return all
+			}
+			subs = append(subs, sq)
+		}
+		return &index.Query{Op: index.QOr, Sub: subs}
+	}
+	// NOT, file: and lang: can't narrow the trigram search.
+	return all
+}
+
 // ParseQuery parses a query string.
 func ParseQuery(s string) (*Query, error) {
 	q := &Query{Raw: s}
@@ -71,109 +236,341 @@ func ParseQuery(s string) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	type pending struct {
-		text   string
-		quoted bool
-		neg    bool
-	}
-	var terms []pending
+	// case: affects how every term is compiled, so find it first.
 	for _, t := range toks {
-		neg := false
-		text := t.text
-		if !t.quoted && len(text) > 1 && text[0] == '-' {
-			neg = true
-			text = text[1:]
-		}
-		key, val, ok := "", "", false
-		if !t.quoted || t.keyed {
-			if i := strings.IndexByte(text, ':'); i > 0 && isKey(text[:i]) {
-				key, val, ok = strings.ToLower(text[:i]), text[i+1:], true
-			}
-		}
-		if !ok {
-			terms = append(terms, pending{text, t.quoted, neg})
-			continue
-		}
-		if val == "" {
-			return nil, fmt.Errorf("missing value for %s:", key)
-		}
-		switch key {
-		case "file", "f", "path":
-			re, err := stdregexp.Compile(smartCase(val, "") + val)
-			if err != nil {
-				re = stdregexp.MustCompile("(?i)" + stdregexp.QuoteMeta(val))
-			}
-			if neg {
-				q.NotFiles = append(q.NotFiles, re)
-			} else {
-				q.Files = append(q.Files, re)
-			}
-		case "lang", "l", "language":
-			f := lang.NewFilter(val)
-			if f == nil {
-				return nil, fmt.Errorf("unknown language %q", val)
-			}
-			if neg {
-				q.NotLangs = append(q.NotLangs, f)
-			} else {
-				q.Langs = append(q.Langs, f)
-			}
-		case "repo", "r":
-			re, err := stdregexp.Compile("(?i)" + val)
-			if err != nil {
-				re = stdregexp.MustCompile("(?i)" + stdregexp.QuoteMeta(val))
-			}
-			if neg {
-				q.NotRepos = append(q.NotRepos, re)
-			} else {
-				q.Repos = append(q.Repos, re)
-			}
-		case "case":
-			switch strings.ToLower(val) {
+		if k, v, ok := strings.Cut(t.text, ":"); ok && !t.quoted && strings.EqualFold(k, "case") {
+			switch strings.ToLower(v) {
 			case "yes", "y", "true", "1", "sensitive":
 				q.Case = "yes"
 			case "no", "n", "false", "0", "insensitive":
 				q.Case = "no"
-			case "auto":
-				q.Case = ""
+			case "auto", "smart":
+				q.Case = "auto"
 			default:
 				return nil, fmt.Errorf("case: must be yes, no or auto")
 			}
-		case "sym", "symbol", "def":
-			if !identRE.MatchString(val) {
-				return nil, fmt.Errorf("sym: requires an identifier")
-			}
-			q.Symbol = val
-		case "content", "c":
-			terms = append(terms, pending{val, t.quoted, neg})
 		}
 	}
-	for _, p := range terms {
-		term, err := newTerm(p.text, p.quoted, q.Case)
-		if err != nil {
-			return nil, err
-		}
-		if p.neg {
-			q.NotTerms = append(q.NotTerms, term)
-		} else {
-			q.Terms = append(q.Terms, term)
-		}
+	p := &parser{q: q, items: groupParens(toks)}
+	expr, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+	if p.pos < len(p.items) {
+		return nil, fmt.Errorf("unexpected )")
 	}
 	if q.Symbol != "" {
 		term, _ := newTerm(`\b`+q.Symbol+`\b`, false, "yes")
 		term.Text = q.Symbol
-		q.Terms = append(q.Terms, term)
+		expr = and(expr, q.leaf(term))
 	}
+	q.Expr = expr
+	q.Simple = true
+	q.walk(expr, true, true)
 	return q, nil
 }
 
-// smartCase returns the regexp flag prefix for text: case-insensitive
-// unless the text contains an upper-case letter, or as forced by mode.
+func and(a, b *Node) *Node {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	case a.Op == OpAnd:
+		a.Kids = append(a.Kids, b)
+		return a
+	}
+	return &Node{Op: OpAnd, Kids: []*Node{a, b}}
+}
+
+func (q *Query) leaf(t *Term) *Node {
+	q.AllTerms = append(q.AllTerms, t)
+	return &Node{Op: OpTerm, Term: len(q.AllTerms) - 1}
+}
+
+// walk records term polarity, the top-level path filters, and
+// whether the expression is a simple conjunction.
+func (q *Query) walk(n *Node, positive, top bool) {
+	if n == nil {
+		return
+	}
+	switch n.Op {
+	case OpAnd:
+		for _, k := range n.Kids {
+			q.walk(k, positive, top)
+		}
+	case OpOr:
+		q.Simple = false
+		for _, k := range n.Kids {
+			q.walk(k, positive, false)
+		}
+	case OpNot:
+		q.Simple = false
+		q.walk(n.Kids[0], !positive, false)
+	case OpTerm:
+		for len(q.positive) <= n.Term {
+			q.positive = append(q.positive, false)
+		}
+		q.positive[n.Term] = positive
+		if positive && !slices.ContainsFunc(q.Terms, func(t *Term) bool { return t.Pattern == q.AllTerms[n.Term].Pattern }) {
+			q.Terms = append(q.Terms, q.AllTerms[n.Term])
+		}
+	case OpFile:
+		if top && positive {
+			q.Files = append(q.Files, n.File)
+		}
+	}
+}
+
+// An item is a token after parenthesis handling.
+type item struct {
+	tok   token
+	paren byte   // '(' or ')' for a grouping parenthesis
+	op    string // "AND", "OR" or "NOT"
+}
+
+// groupParens splits grouping parentheses off tokens. A matched pair of
+// parentheses at the start and end of tokens groups if a parenthesis
+// stands alone or an operator appears between them; otherwise the
+// parentheses are part of the search text, as in "func (b *Reader)".
+func groupParens(toks []token) []item {
+	type mark struct{ tok, n int }
+	lead := make([]int, len(toks))  // leading '(' count
+	trail := make([]int, len(toks)) // trailing ')' count
+	for i, t := range toks {
+		if t.quoted {
+			continue
+		}
+		for lead[i] < len(t.text) && t.text[lead[i]] == '(' {
+			lead[i]++
+		}
+		for trail[i] < len(t.text)-lead[i] && t.text[len(t.text)-1-trail[i]] == ')' {
+			trail[i]++
+		}
+	}
+	isOp := func(i int) bool {
+		t := toks[i]
+		return !t.quoted && (t.text == "OR" || t.text == "AND" || t.text == "NOT")
+	}
+	open := make([]int, len(toks))  // grouping '(' per token
+	close := make([]int, len(toks)) // grouping ')' per token
+	var stack []int
+	for i := range toks {
+		for range lead[i] {
+			stack = append(stack, i)
+		}
+		for range trail[i] {
+			if len(stack) == 0 {
+				break
+			}
+			a := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			group := len(toks[a].text) == lead[a] || len(toks[i].text) == trail[i]
+			for j := a + 1; j < i && !group; j++ {
+				group = isOp(j)
+			}
+			if a != i && group {
+				open[a]++
+				close[i]++
+			}
+		}
+	}
+	var items []item
+	for i, t := range toks {
+		for range open[i] {
+			items = append(items, item{paren: '('})
+		}
+		core := t
+		core.text = t.text[open[i] : len(t.text)-close[i]]
+		switch {
+		case core.text == "" && !t.quoted:
+			// only parentheses
+		case isOp(i):
+			items = append(items, item{op: t.text})
+		default:
+			items = append(items, item{tok: core})
+		}
+		for range close[i] {
+			items = append(items, item{paren: ')'})
+		}
+	}
+	return items
+}
+
+type parser struct {
+	q     *Query
+	items []item
+	pos   int
+}
+
+func (p *parser) peek() *item {
+	if p.pos < len(p.items) {
+		return &p.items[p.pos]
+	}
+	return nil
+}
+
+func (p *parser) parseOr() (*Node, error) {
+	left, err := p.parseAnd()
+	if err != nil {
+		return nil, err
+	}
+	var kids []*Node
+	for it := p.peek(); it != nil && it.op == "OR"; it = p.peek() {
+		p.pos++
+		right, err := p.parseAnd()
+		if err != nil {
+			return nil, err
+		}
+		if left == nil || right == nil {
+			return nil, fmt.Errorf("OR needs search terms on both sides")
+		}
+		if kids == nil {
+			kids = []*Node{left}
+		}
+		kids = append(kids, right)
+	}
+	if kids != nil {
+		return &Node{Op: OpOr, Kids: kids}, nil
+	}
+	return left, nil
+}
+
+func (p *parser) parseAnd() (*Node, error) {
+	var n *Node
+	for {
+		it := p.peek()
+		if it == nil || it.paren == ')' || it.op == "OR" {
+			return n, nil
+		}
+		if it.op == "AND" {
+			p.pos++
+			continue
+		}
+		k, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		if k != nil {
+			n = and(n, k)
+		}
+	}
+}
+
+func (p *parser) parseUnary() (*Node, error) {
+	it := p.peek()
+	p.pos++
+	switch {
+	case it.op == "NOT":
+		if p.peek() == nil {
+			return nil, fmt.Errorf("NOT needs a search term")
+		}
+		k, err := p.parseUnary()
+		if err != nil || k == nil {
+			return nil, err
+		}
+		return &Node{Op: OpNot, Kids: []*Node{k}}, nil
+	case it.paren == '(':
+		n, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		if c := p.peek(); c == nil || c.paren != ')' {
+			return nil, fmt.Errorf("missing )")
+		}
+		p.pos++
+		if n == nil {
+			return nil, fmt.Errorf("empty ( )")
+		}
+		return n, nil
+	}
+	return p.atom(it.tok)
+}
+
+// atom parses a single search term or filter. Filters that apply to
+// the whole query (repo:, case:, sym:) are recorded in the Query and
+// return a nil node.
+func (p *parser) atom(t token) (*Node, error) {
+	q := p.q
+	neg := false
+	text := t.text
+	if !t.quoted && len(text) > 1 && text[0] == '-' {
+		neg = true
+		text = text[1:]
+	}
+	wrap := func(n *Node) (*Node, error) {
+		if neg {
+			n = &Node{Op: OpNot, Kids: []*Node{n}}
+		}
+		return n, nil
+	}
+	key, val, ok := "", "", false
+	if !t.quoted || t.keyed {
+		if i := strings.IndexByte(text, ':'); i > 0 && isKey(text[:i]) {
+			key, val, ok = strings.ToLower(text[:i]), text[i+1:], true
+		}
+	}
+	if !ok {
+		term, err := newTerm(text, t.quoted, q.Case)
+		if err != nil {
+			return nil, err
+		}
+		return wrap(q.leaf(term))
+	}
+	if val == "" {
+		return nil, fmt.Errorf("missing value for %s:", key)
+	}
+	switch key {
+	case "file", "f", "path":
+		re, err := stdregexp.Compile(smartCase(val, q.Case) + val)
+		if err != nil {
+			re = stdregexp.MustCompile("(?i)" + stdregexp.QuoteMeta(val))
+		}
+		return wrap(&Node{Op: OpFile, File: re})
+	case "lang", "l", "language":
+		f := lang.NewFilter(val)
+		if f == nil {
+			return nil, fmt.Errorf("unknown language %q", val)
+		}
+		return wrap(&Node{Op: OpLang, Lang: f})
+	case "repo", "r":
+		re, err := stdregexp.Compile("(?i)" + val)
+		if err != nil {
+			re = stdregexp.MustCompile("(?i)" + stdregexp.QuoteMeta(val))
+		}
+		if neg {
+			q.NotRepos = append(q.NotRepos, re)
+		} else {
+			q.Repos = append(q.Repos, re)
+		}
+		return nil, nil
+	case "case":
+		return nil, nil // handled in ParseQuery
+	case "sym", "symbol", "def":
+		if !identRE.MatchString(val) {
+			return nil, fmt.Errorf("sym: requires an identifier")
+		}
+		q.Symbol = val
+		return nil, nil
+	case "content", "c":
+		term, err := newTerm(val, t.quoted, q.Case)
+		if err != nil {
+			return nil, err
+		}
+		return wrap(q.leaf(term))
+	}
+	return nil, nil
+}
+
+// smartCase returns the regexp flag prefix for text under the case
+// mode: case-insensitive by default, case-sensitive for "yes", and for
+// "auto" case-sensitive only if the text has an upper-case letter.
 func smartCase(text, mode string) string {
 	switch mode {
 	case "yes":
 		return ""
-	case "no":
+	case "auto":
+	default:
 		return "(?i)"
 	}
 	for _, r := range text {

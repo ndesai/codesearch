@@ -99,18 +99,27 @@ func TestIncremental(t *testing.T) {
 	write(t, root, "d1/top_only/a.go", "foo bar\n") // only the top-level one is excluded
 	write(t, root, ".hidden/a.go", "foo\n")
 	write(t, root, "bin.dat2", "foo\x00bar")
+	write(t, root, ".gitignore", "/generated/\n*.tmp\n")
+	write(t, root, "generated/x.go", "foo\n")
+	write(t, root, "d2/scratch.tmp", "foo\n")
+	write(t, root, "d2/sub/.gitignore", "!keep.tmp\n")
+	write(t, root, "d2/sub/keep.tmp", "foo\n")
 
 	cfg := testConfig(t, root, 10)
 	r := update(t, cfg, false)
-	if !r.Full || r.Shards != 5 || r.Files != 42 {
+	if !r.Full || r.Shards != 5 || r.Files != 43 {
 		t.Fatalf("first update: %v", r)
 	}
 	names, _ := contents(t, cfg)
-	if len(names) != 41 { // binary file not indexed
-		t.Fatalf("indexed %d names, want 41", len(names))
+	if len(names) != 42 { // binary file not indexed
+		t.Fatalf("indexed %d names, want 42", len(names))
+	}
+	if !slices.Contains(names, filepath.Join(root, "d2/sub/keep.tmp")) {
+		t.Errorf("file re-included by nested .gitignore not indexed")
 	}
 	for _, n := range names {
-		if strings.Contains(n, "skipme") || strings.Contains(n, ".hidden") || strings.Contains(n, root+"/top_only") {
+		if strings.Contains(n, "skipme") || strings.Contains(n, ".hidden") || strings.Contains(n, root+"/top_only") ||
+			strings.Contains(n, "/generated/") || strings.HasSuffix(n, "scratch.tmp") {
 			t.Errorf("excluded file indexed: %s", n)
 		}
 	}
@@ -239,5 +248,21 @@ func TestComparePathsMatchesIndexOrder(t *testing.T) {
 	want := []string{"a", "a/a", "a/b", "a/b/c", "a-b", "a.c", "ab"}
 	if !slices.Equal(paths, want) {
 		t.Fatalf("got %v want %v", paths, want)
+	}
+}
+
+func TestIgnoreStack(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".gitignore", "*.o\n/out/\n")
+	write(t, root, "a/b/.gitignore", "gen/\n!keep.o\n")
+	write(t, root, ".git/info/exclude", "secret.txt\n")
+	s := IgnoreStack(root, "a/b")
+	for path, want := range map[string]bool{"a/b/x.o": true, "a/b/keep.o": false, "a/b/secret.txt": true, "a/b/c.go": false} {
+		if got := s.Ignored(path, false); got != want {
+			t.Errorf("Ignored(%s) = %v, want %v", path, got, want)
+		}
+	}
+	if !s.Ignored("a/b/gen", true) || IgnoreStack(root, "").Ignored("a/out", true) || !IgnoreStack(root, "").Ignored("out", true) {
+		t.Error("directory rules")
 	}
 }

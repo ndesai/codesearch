@@ -47,19 +47,32 @@ Searching
 ---------
 
 	foo bar         files containing both foo and bar (regular expressions)
+	foo OR bar      files containing either
+	-foo, NOT foo   files not containing foo
+	(a OR b) -c     grouping; file: and lang: work inside groups too
 	"foo(bar"       literal text
-	-foo            files not containing foo
 	file:\.cc$      path matches a regexp (-file: to exclude; also f:)
 	lang:java       language (c, c++, java, kotlin, go, py, rust, ts, bp, aidl, ...)
 	repo:aosp       repository name (-repo: to exclude)
 	sym:Activity    definitions of a symbol
-	case:yes        case-sensitive (default: case-insensitive unless the
-	                query has upper-case letters)
+	case:yes        case-sensitive (the default is case-insensitive;
+	                case:auto is case-sensitive only for terms with
+	                upper-case letters)
 
 In the code browser, click any identifier to see its definitions and
 references, or Ctrl/Cmd-click to jump straight to the definition.
 Click line numbers to link to lines (shift-click for ranges).
+For files in git repositories, Blame (b) shows who last changed each
+line and History (h) lists the commits that changed the file, with
+diffs and links to view the file as of each commit. The sidebar's
+Outline tab (o) lists the file's classes, functions and methods.
+In search results, the sidebar narrows results by repository, language
+and directory, and j/k move between matches.
 Press / to search, ? for help.
+
+The indexer honors .gitignore files (and .git/info/exclude) in the
+indexed folders, including nested repositories; set use_gitignore: false
+in the config to index ignored files too.
 
 Cross references are search based: they use the trigram index to find
 the identifier as a whole word and classify each hit as a definition or

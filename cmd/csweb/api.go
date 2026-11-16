@@ -24,8 +24,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/alecthomas/chroma/v2"
+	"github.com/google/codesearch/internal/gitignore"
 	"github.com/google/codesearch/internal/indexer"
 	"github.com/google/codesearch/internal/lang"
+	"github.com/google/codesearch/internal/outline"
 	"github.com/google/codesearch/internal/search"
 )
 
@@ -129,7 +131,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if len(q.Terms) == 0 && len(q.Files) == 0 && len(q.Langs) == 0 && len(q.Repos) == 0 {
+		if q.Expr == nil && len(q.Repos) == 0 && len(q.NotRepos) == 0 {
 			writeError(w, http.StatusBadRequest, errors.New("query has nothing to search for"))
 			return
 		}
@@ -161,6 +163,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		"files":          renderFiles(res.Files[lo:hi], maxLinesShown),
 		"nameMatches":    names,
 		"numNameMatches": res.NumNames,
+		"facets":         res.Facets,
 	})
 }
 
@@ -221,18 +224,27 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	info, err := os.Stat(abs)
+	rev, err := revArg(r)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil && rev == "" {
 		writeError(w, http.StatusNotFound, errors.New("file not found"))
 		return
 	}
-	if info.IsDir() {
+	if rev == "" && info.IsDir() {
 		ents, err := os.ReadDir(abs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		cfg := s.engine.Config()
+		var ign gitignore.Stack
+		if cfg.Gitignore() {
+			ign = indexer.IgnoreStack(repo.Root, rel)
+		}
 		var out []dirEntry
 		for _, e := range ents {
 			name := e.Name()
@@ -240,7 +252,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			child := path.Join(rel, name)
-			de := dirEntry{Name: name, Dir: e.IsDir(), Excluded: repo.Excluded(child)}
+			de := dirEntry{Name: name, Dir: e.IsDir(), Excluded: repo.Excluded(child) || ign.Ignored(child, e.IsDir())}
 			if e.Type()&os.ModeSymlink != 0 {
 				if st, err := os.Stat(filepath.Join(abs, name)); err == nil {
 					de.Dir = st.IsDir()
@@ -277,19 +289,34 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]any{
-		"kind": "file", "repo": repo.Name, "path": rel, "size": info.Size(),
-		"lang": lang.Detect(rel).Name, "modified": info.ModTime(),
+	langName := lang.Detect(rel).Name
+	resp := map[string]any{"kind": "file", "repo": repo.Name, "path": rel, "lang": langName}
+	if _, _, err := gitFile(r.Context(), abs); err == nil {
+		resp["git"] = true
 	}
-	if info.Size() > maxViewBytes {
-		resp["tooLarge"] = true
-		writeJSON(w, resp)
-		return
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	var data []byte
+	if rev != "" {
+		// An older version, from the history view.
+		data, err = readAtRev(r.Context(), abs, rev, r.FormValue("at"))
+		if err != nil {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		resp["rev"] = rev
+		resp["size"] = len(data)
+	} else {
+		resp["size"] = info.Size()
+		resp["modified"] = info.ModTime()
+		if info.Size() > maxViewBytes {
+			resp["tooLarge"] = true
+			writeJSON(w, resp)
+			return
+		}
+		data, err = os.ReadFile(abs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	if isImage(rel) {
 		resp["image"] = true
@@ -312,6 +339,9 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["lines"] = renderSource(rel, src, terms)
+	if len(src) <= maxHighlightBytes {
+		resp["outline"] = outline.Extract(langName, src)
+	}
 	writeJSON(w, resp)
 }
 

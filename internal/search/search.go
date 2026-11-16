@@ -10,6 +10,8 @@ import (
 	"math"
 	"os"
 	"path"
+	stdregexp "regexp"
+	"regexp/syntax"
 	"runtime"
 	"slices"
 	"sort"
@@ -57,6 +59,24 @@ type Result struct {
 	Elapsed     float64      `json:"elapsed"`
 	// Terms are the content patterns, for highlighting in file views.
 	Terms []string `json:"terms,omitempty"`
+	// Facets break the matching files down by repository, language
+	// and directory, for narrowing the search.
+	Facets *Facets `json:"facets,omitempty"`
+}
+
+// Facets count matching files by attribute.
+type Facets struct {
+	Repos []Facet `json:"repos"`
+	Langs []Facet `json:"langs"`
+	Dirs  []Facet `json:"dirs"`
+}
+
+// A Facet is one value of an attribute, with the query filter that
+// selects it.
+type Facet struct {
+	Label  string `json:"label"`
+	Filter string `json:"filter"`
+	Count  int    `json:"count"`
 }
 
 // A FileMatch is a file with matching lines.
@@ -158,7 +178,7 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 	}
 
 	// File name matches run concurrently with content search.
-	if len(q.Terms) == 1 && q.Symbol == "" && len(q.NotTerms) == 0 {
+	if len(q.Terms) == 1 && q.Symbol == "" && q.Simple {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -175,6 +195,7 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 		res.Truncated = true
 	}
 	res.Candidates = int(cands.Load())
+	res.Facets = facets(res.Files)
 	res.NumFiles = len(res.Files)
 	for _, f := range res.Files {
 		res.NumMatches += f.NumMatches
@@ -222,76 +243,36 @@ func repoMatch(q *Query, name string) bool {
 	return true
 }
 
-// pathMatch reports whether rel passes the query's path and language filters.
-func pathMatch(q *Query, rel string) bool {
-	for _, re := range q.Files {
-		if !re.MatchString(rel) {
-			return false
-		}
-	}
-	for _, re := range q.NotFiles {
-		if re.MatchString(rel) {
-			return false
-		}
-	}
-	for _, f := range q.Langs {
-		if !f.Match(rel) {
-			return false
-		}
-	}
-	for _, f := range q.NotLangs {
-		if f.Match(rel) {
-			return false
-		}
-	}
-	return true
-}
-
 // A scanner holds per-goroutine state for matching files.
 // The DFA regexp matcher is not safe for concurrent use,
 // so each goroutine compiles its own copies.
 type scanner struct {
 	q     *Query
-	terms []*regexp.Regexp
-	nots  []*regexp.Regexp
-	iq    *index.Query
+	terms []*regexp.Regexp // compiled q.AllTerms
+	iq    *index.Query     // nil if there are no content terms
 	defs  *defMatcher
 }
 
 func newScanner(q *Query) *scanner {
 	s := &scanner{q: q}
-	var iq *index.Query
-	for _, t := range q.Terms {
+	var syn []*syntax.Regexp
+	for _, t := range q.AllTerms {
 		re, err := regexp.Compile("(?m)" + t.Pattern)
 		if err != nil {
 			panic(err) // validated by ParseQuery
 		}
 		s.terms = append(s.terms, re)
-		tq := index.RegexpQuery(re.Syntax)
-		if iq == nil {
-			iq = tq
-		} else {
-			iq = andQuery(iq, tq)
-		}
+		syn = append(syn, re.Syntax)
 	}
-	for _, t := range q.NotTerms {
-		re, err := regexp.Compile("(?m)" + t.Pattern)
-		if err != nil {
-			panic(err)
-		}
-		s.nots = append(s.nots, re)
+	if len(q.AllTerms) > 0 {
+		s.iq = q.IndexQuery(syn)
 	}
-	s.iq = iq
 	if q.Symbol != "" {
 		s.defs = defsFor(q.Symbol)
 	} else if len(q.Terms) == 1 && q.Terms[0].IsIdent() {
 		s.defs = defsFor(q.Terms[0].Text)
 	}
 	return s
-}
-
-func andQuery(a, b *index.Query) *index.Query {
-	return &index.Query{Op: index.QAnd, Sub: []*index.Query{a, b}}
 }
 
 // shard calls fn for each file in sh that may match the query,
@@ -318,7 +299,7 @@ func (s *scanner) shard(ctx context.Context, r *Repo, sh *shard, fn func(id int,
 			continue
 		}
 		rel := names.name(id)
-		if !pathMatch(s.q, rel) {
+		if !s.q.PathMatch(rel) {
 			continue
 		}
 		if !fn(id, rel) {
@@ -376,42 +357,72 @@ func eachLine(re *regexp.Regexp, data []byte, fn func(lo, hi int) bool) {
 // file searches one file, returning nil if it does not match.
 func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch {
 	if len(s.terms) == 0 {
+		if !s.q.Match(rel, nil) {
+			return nil
+		}
 		return &FileMatch{Repo: r.Name, Path: rel, Lang: lang.Detect(rel).Name}
 	}
-	abs := r.Root + string(os.PathSeparator) + rel
-	if os.PathSeparator != '/' {
-		abs = r.Root + string(os.PathSeparator) + strings.ReplaceAll(rel, "/", string(os.PathSeparator))
-	}
-	data, err := os.ReadFile(abs)
+	data, err := os.ReadFile(r.Root + string(os.PathSeparator) + filepathFromSlash(rel))
 	if err != nil {
 		return nil
 	}
-	for _, re := range s.nots {
-		if re.Match(data, true, true) >= 0 {
-			return nil
-		}
-	}
 
+	// Find each term's matching lines on demand: the expression may
+	// not need every term (for example, the second operand of a
+	// satisfied OR), and terms under NOT only need a yes or no.
 	type hit struct{ lo, hi, terms int }
 	var hits []hit
 	count := 0
-	for _, re := range s.terms {
+	const (
+		unknown = iota
+		absent
+		present   // found, lines not collected
+		collected // lines collected (found)
+	)
+	state := make([]int8, len(s.terms))
+	collect := func(i int) {
+		if state[i] == collected || state[i] == absent {
+			return
+		}
 		n := 0
-		eachLine(re, data, func(lo, hi int) bool {
+		eachLine(s.terms[i], data, func(lo, hi int) bool {
 			n++
 			if len(hits) < 4*maxLines {
 				hits = append(hits, hit{lo, hi, 1})
 			}
 			return true
 		})
-		if n == 0 {
-			return nil // every term must match
-		}
 		count += n
+		state[i] = collected
+		if n == 0 {
+			state[i] = absent
+		}
 	}
+	has := func(i int) bool {
+		if state[i] == unknown {
+			if s.q.IsPositive(i) {
+				collect(i)
+			} else if s.terms[i].Match(data, true, true) >= 0 {
+				state[i] = present
+			} else {
+				state[i] = absent
+			}
+		}
+		return state[i] >= present
+	}
+	if !s.q.Match(rel, has) {
+		return nil
+	}
+	// Show lines for every positive term present, including any the
+	// expression didn't need to look at.
+	for i := range s.terms {
+		if s.q.IsPositive(i) {
+			collect(i)
+		}
+	}
+	slices.SortFunc(hits, func(a, b hit) int { return a.lo - b.lo })
 	if len(s.terms) > 1 {
 		// Merge lines matched by several terms, counting the terms.
-		slices.SortFunc(hits, func(a, b hit) int { return a.lo - b.lo })
 		out := hits[:0]
 		for _, h := range hits {
 			if n := len(out); n > 0 && out[n-1].lo == h.lo {
@@ -461,7 +472,7 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 		fm.Lines = fm.Lines[:maxLines]
 	}
 	k := 0
-	for k < len(fm.Lines) && (fm.Lines[k].Def || len(s.terms) > 1 && fm.Lines[k].terms == len(s.terms)) {
+	for k < len(fm.Lines) && (fm.Lines[k].Def || len(s.q.Terms) > 1 && fm.Lines[k].terms == len(s.q.Terms)) {
 		k++
 	}
 	slices.SortFunc(fm.Lines[k:], func(a, b LineMatch) int { return a.Line - b.Line })
@@ -621,21 +632,8 @@ func collectNames(ctx context.Context, snaps []*snapshot, q *Query, t *Term, bas
 		}
 		return 3
 	}
-	// Directories have no language, so a lang: filter rules them out.
-	dirs := len(q.Langs) == 0
-	dirOK := func(d string) bool {
-		for _, re := range q.Files {
-			if !re.MatchString(d) {
-				return false
-			}
-		}
-		for _, re := range q.NotFiles {
-			if re.MatchString(d) {
-				return false
-			}
-		}
-		return true
-	}
+	// Directories are filtered like files (a lang: filter rules them out).
+	dirOK := q.PathMatch
 	var all []nameCand
 	for _, s := range snaps {
 		seen := map[string]bool{} // directories already considered
@@ -647,14 +645,14 @@ func collectNames(ctx context.Context, snaps []*snapshot, q *Query, t *Term, bas
 			eachLine(re, names.blob, func(lo, hi int) bool {
 				p := string(names.blob[lo:hi])
 				if base := path.Base(p); t.Std.MatchString(base) {
-					if pathMatch(q, p) {
+					if q.PathMatch(p) {
 						all = append(all, nameCand{s.repo.Name, p, false, rank(base)})
 					}
-				} else if !baseOnly && pathMatch(q, p) {
+				} else if !baseOnly && q.PathMatch(p) {
 					all = append(all, nameCand{s.repo.Name, p, false, 4})
 				}
 				// Directories containing this file whose names match.
-				for i := 0; dirs && i < len(p); i++ {
+				for i := 0; i < len(p); i++ {
 					if p[i] != '/' {
 						continue
 					}
@@ -700,4 +698,76 @@ func topNames(all []nameCand, limit int) []*NameMatch {
 		out = append(out, &NameMatch{Repo: c.repo, Path: c.path, Dir: c.dir})
 	}
 	return out
+}
+
+const maxFacets = 12
+
+// facets counts files by repository, language and directory.
+func facets(files []*FileMatch) *Facets {
+	if len(files) == 0 {
+		return nil
+	}
+	top := func(counts map[string]int, filter func(string) string) []Facet {
+		var out []Facet
+		for k, n := range counts {
+			out = append(out, Facet{Label: k, Filter: filter(k), Count: n})
+		}
+		slices.SortFunc(out, func(a, b Facet) int {
+			if a.Count != b.Count {
+				return b.Count - a.Count
+			}
+			return strings.Compare(a.Label, b.Label)
+		})
+		return out[:min(len(out), maxFacets)]
+	}
+	repos := map[string]int{}
+	langs := map[string]int{}
+	for _, f := range files {
+		repos[f.Repo]++
+		langs[f.Lang]++
+	}
+	f := &Facets{
+		Repos: top(repos, func(r string) string { return "repo:^" + stdregexp.QuoteMeta(r) + "$" }),
+		Langs: top(langs, langFilter),
+	}
+
+	// Directories: group by leading path elements, descending while a
+	// single directory holds every match (so results all under
+	// frameworks/base/core show that directory's children).
+	prefix := ""
+	var dirs map[string]int
+	for {
+		dirs = map[string]int{}
+		for _, fm := range files {
+			if p, ok := strings.CutPrefix(fm.Path, prefix); ok {
+				if i := strings.IndexByte(p, '/'); i >= 0 {
+					dirs[prefix+p[:i+1]]++
+				}
+			}
+		}
+		if len(dirs) != 1 || len(repos) > 1 {
+			break
+		}
+		next := ""
+		for d, n := range dirs {
+			if n == len(files) {
+				next = d
+			}
+		}
+		if next == "" {
+			break
+		}
+		prefix = next
+	}
+	f.Dirs = top(dirs, func(d string) string { return "file:^" + stdregexp.QuoteMeta(d) })
+	return f
+}
+
+// langFilter returns the lang: filter for a detected language name.
+func langFilter(name string) string {
+	v := strings.ToLower(name)
+	if strings.ContainsAny(v, ` "`) {
+		return `lang:"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
+	}
+	return "lang:" + v
 }

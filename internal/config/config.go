@@ -61,6 +61,9 @@ type Config struct {
 	UseDefaultExcludes *bool `yaml:"use_default_excludes"`
 	// IncludeHidden indexes files and directories whose names begin with ".".
 	IncludeHidden bool `yaml:"include_hidden"`
+	// UseGitignore skips files matched by .gitignore files and
+	// .git/info/exclude in the indexed folders (default true).
+	UseGitignore *bool `yaml:"use_gitignore"`
 	// Repos lists the folders to index.
 	Repos []*Repo `yaml:"repos"`
 
@@ -232,6 +235,10 @@ func Parse(file string, data []byte) (*Config, error) {
 		t := true
 		c.UseDefaultExcludes = &t
 	}
+	if c.UseGitignore == nil {
+		t := true
+		c.UseGitignore = &t
+	}
 	if len(c.Repos) == 0 {
 		return nil, errorf("no repos configured")
 	}
@@ -270,6 +277,11 @@ func Parse(file string, data []byte) (*Config, error) {
 	return c, nil
 }
 
+// Gitignore reports whether .gitignore files are honored.
+func (c *Config) Gitignore() bool {
+	return c.UseGitignore == nil || *c.UseGitignore
+}
+
 // Repo returns the repo with the given name, or nil.
 func (c *Config) Repo(name string) *Repo {
 	for _, r := range c.Repos {
@@ -284,7 +296,7 @@ func (c *Config) Repo(name string) *Repo {
 // affect which files are indexed for r change.
 func (c *Config) Fingerprint(r *Repo) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "v1\x00%s\x00%d\x00%v\x00", r.Path, c.MaxFileSize, c.IncludeHidden)
+	fmt.Fprintf(h, "v1\x00%s\x00%d\x00%v\x00%v\x00", r.Path, c.MaxFileSize, c.IncludeHidden, c.Gitignore())
 	for _, p := range r.Excludes.patterns {
 		fmt.Fprintf(h, "%s\x00", p)
 	}
