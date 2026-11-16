@@ -142,7 +142,8 @@ async function pollStatus() {
   if (ix.running) {
     let what = ix.phase === 'indexing' ? `Indexing ${esc(ix.repo)} · ${fmtNum(ix.indexed)}/${fmtNum(ix.toIndex)}`
       : `Scanning ${esc(ix.repo || '')}${ix.walked ? ' · ' + fmtNum(ix.walked) + ' files' : ''}`;
-    el.innerHTML = `<span class="spinner"></span>${what}`;
+    el.innerHTML = `<span class="spinner"></span><span class="itext">${what}</span>`;
+    el.title = el.textContent;
     el.hidden = false;
   } else {
     el.hidden = true;

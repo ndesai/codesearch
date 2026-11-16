@@ -64,6 +64,9 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* Stop mobile browsers (notably iOS Safari) from enlarging the text of
+   wide blocks, which made long code lines bigger than short ones. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.45 var(--sans);
@@ -315,6 +318,13 @@ dialog#help .close { position: absolute; right: 10px; top: 10px; }
   .logo span { display: none; }
   .finfo { display: none; }
   .results { padding: 12px; }
+  /* Keep the search box usable: show indexing progress as a spinner only. */
+  .topbar { gap: 10px; padding: 0 12px; }
+  .searchbox { min-width: 0; }
+  .indexing .itext { display: none; }
+  /* Give the file path its own line instead of squeezing it to nothing. */
+  .fhead { gap: 6px 10px; padding: 8px 12px; }
+  .crumbs { flex: 1 0 100%; white-space: normal; overflow-wrap: anywhere; }
 }
 
 /* ---- filter sidebar ---- */
