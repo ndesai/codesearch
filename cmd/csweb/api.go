@@ -502,3 +502,48 @@ func (c *resultCache) clear() {
 	c.ll.Init()
 	clear(c.m)
 }
+
+// handlePreview serves repository files with their real content types so
+// that HTML files (and the CSS, scripts and images they reference by
+// relative URL) can be previewed in the browser.
+//
+// The content is untrusted, so every response carries a CSP sandbox
+// without allow-same-origin: the page runs in an opaque origin, and its
+// scripts cannot read the app's API or anything else on this server.
+// Framing is limited to the app itself.
+func (s *server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/preview/")
+	name, rel, _ := strings.Cut(rest, "/")
+	repo := s.engine.Repo(name)
+	if repo == nil {
+		http.NotFound(w, r)
+		return
+	}
+	abs, err := repo.Abs(rel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	ctype := mime.TypeByExtension(strings.ToLower(path.Ext(rel)))
+	if ctype == "" {
+		ctype = "text/plain; charset=utf-8"
+	}
+	h := w.Header()
+	h.Del("X-Frame-Options")
+	h.Set("Content-Type", ctype)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups allow-modals; frame-ancestors 'self'")
+	h.Set("Cache-Control", "no-cache")
+	http.ServeContent(w, r, "", st.ModTime(), struct{ io.ReadSeeker }{f})
+}

@@ -69,6 +69,7 @@ const icons = {
   chevron: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6z"/></svg>',
   raw: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h8v2H8z"/></svg>',
   copy: '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11z"/></svg>',
+  popout: '<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>',
   tree: '<svg viewBox="0 0 24 24"><path d="M3 3h8v2H3zm4 4h8v2H7zm0 4h8v2H7zm-4 4h8v2H3zm4 4h8v2H7z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 9.5 16a6.5 6.5 0 0 0 4.2-1.6l.3.3v.8l5 5 1.5-1.5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>',
 };
@@ -459,7 +460,10 @@ async function renderFile(repo, path, q, rev, at) {
   }
 
   const nlines = r.lines ? r.lines.length : 0;
+  const canPreview = isHTMLFile(path) && !rev && r.lines;
   head.innerHTML = crumbsHTML(repo, path) +
+    (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>
+      <a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
     (rev ? `<span class="revbanner">Version <code>${esc(rev.slice(0, 10))}</code> · <a href="${fileURL(repo, path)}">Current version</a></span>` : '') +
     `<span class="findnav" hidden></span>` +
@@ -477,6 +481,7 @@ async function renderFile(repo, path, q, rev, at) {
     if (b.dataset.act === 'tree') toggleTree();
     if (b.dataset.act === 'blame') toggleBlame();
     if (b.dataset.act === 'history') showHistory();
+    if (b.dataset.act === 'preview') togglePreview();
   };
 
   if (r.tooLarge) wrap.innerHTML = `<div class="notice">This file is too large to display (${fmtBytes(r.size)}). <a href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank">View raw</a></div>`;
@@ -490,6 +495,35 @@ async function renderFile(repo, path, q, rev, at) {
   renderOutline(r.outline);
   onHash(true);
   restorePanel();
+}
+
+// ---- HTML preview ----
+
+const isHTMLFile = p => /\.(html?|xhtml)$/i.test(p);
+const previewURL = (repo, path) => '/preview/' + encodeURIComponent(repo) + '/' + encPath(path);
+
+// togglePreview switches an HTML file between its source and the
+// rendered page. The page runs in a sandboxed frame with an opaque
+// origin (see handlePreview), so its scripts can't reach the app.
+function togglePreview() {
+  const v = view, wrap = $('.codewrap', app), head = $('.fhead', app);
+  if (!v || v.kind !== 'file' || !v.data || !wrap) return;
+  v.preview = !v.preview;
+  const btn = $('[data-act="preview"]', head);
+  btn.classList.toggle('on', v.preview);
+  btn.textContent = v.preview ? 'Code' : 'Preview';
+  btn.title = v.preview ? 'Show the source' : 'Show the rendered page';
+  $('.popout', head).hidden = !v.preview;
+  $('[data-act="blame"]', head)?.toggleAttribute('disabled', v.preview);
+  $('.findnav', head).style.visibility = v.preview ? 'hidden' : '';
+  if (v.preview) {
+    wrap.innerHTML = `<iframe class="preview" title="Preview of ${esc(v.path)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" src="${previewURL(v.repo, v.path)}"></iframe>`;
+    return;
+  }
+  wrap.innerHTML = codeHTML(v.data.lines, true);
+  setupFind(head, wrap, v.q);
+  if (blameOn && v.data.git) toggleBlame(true);
+  onHash(true);
 }
 
 function codeHTML(lines, clickable) {
@@ -1072,7 +1106,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 't' && view && view.kind === 'file') { toggleTree(); }
   else if ((e.key === 'j' || e.key === 'k') && view && view.kind === 'search') { e.preventDefault(); moveCursor(e.key === 'j' ? 1 : -1); }
   else if ((e.key === 'Enter' || e.key === 'o') && view && view.kind === 'search' && view.cursor >= 0) { openCursor(); }
-  else if (e.key === 'b' && view && view.kind === 'file' && view.data && view.data.git) { toggleBlame(); }
+  else if (e.key === 'b' && view && view.kind === 'file' && view.data && view.data.git && !view.preview) { toggleBlame(); }
   else if (e.key === 'h' && view && view.kind === 'file' && view.data && view.data.git) { showHistory(); }
   else if (e.key === 'o' && view && view.kind === 'file') { e.preventDefault(); setSideTab('outline', true); }
   else if ((e.key === 'n' || e.key === 'N') && view && view.marks) { gotoMark(e.key === 'n' ? 1 : -1); }

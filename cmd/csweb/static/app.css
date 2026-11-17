@@ -232,12 +232,16 @@ mark.cur { background: var(--mark-cur); }
 
 .fmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .fhead { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex: none; min-height: 45px; flex-wrap: wrap; }
-.crumbs { font: 13.5px var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.crumbs { font: 13.5px var(--mono); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .crumbs a { color: var(--text-2); }
 .crumbs .sep { color: var(--text-3); margin: 0 2px; }
 .crumbs .last { color: var(--text); font-weight: 600; }
 .crumbs .repo-chip { margin-right: 8px; }
-.finfo { color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.finfo { color: var(--text-3); font-size: 12px; white-space: nowrap; margin-left: auto; }
+.fhead .popout { width: 28px; height: 28px; margin-left: -8px; }
+.fhead .popout svg { width: 16px; height: 16px; }
+.tbtn:disabled { opacity: .45; cursor: default; }
+iframe.preview { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
 .factions { display: flex; gap: 4px; align-items: center; }
 .factions .iconbtn { width: 30px; height: 30px; }
 .factions .iconbtn svg { width: 17px; height: 17px; }
