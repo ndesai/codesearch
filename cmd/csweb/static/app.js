@@ -69,6 +69,8 @@ const icons = {
   chevron: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6z"/></svg>',
   raw: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zm-1 7V3.5L18.5 9zM8 13h8v2H8zm0 4h8v2H8z"/></svg>',
   copy: '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11z"/></svg>',
+  link: '<svg viewBox="0 0 24 24"><path d="M3.9 12a3.1 3.1 0 0 1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12zM8 13h8v-2H8v2zm9-6h-4v1.9h4a3.1 3.1 0 0 1 0 6.2h-4V17h4a5 5 0 0 0 0-10z"/></svg>',
+  history: '<svg class="ico" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8z"/></svg>',
   popout: '<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>',
   tree: '<svg viewBox="0 0 24 24"><path d="M3 3h8v2H3zm4 4h8v2H7zm0 4h8v2H7zm-4 4h8v2H3zm4 4h8v2H7z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 9.5 16a6.5 6.5 0 0 0 4.2-1.6l.3.3v.8l5 5 1.5-1.5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>',
@@ -175,6 +177,7 @@ function renderHome() {
         <a href="${searchURL('file:README')}">file:README</a>
         <a href="#" id="showhelp">more…</a>
       </div>
+      <div id="homelists"></div>
       <div class="section-title"><span>Repositories</span><span class="grow"></span>
         <button class="btn" id="reindex">Update index</button></div>
       <div class="repos" id="repos"><div class="loading"><span class="spinner"></span>Loading…</div></div>
@@ -191,6 +194,7 @@ function renderHome() {
   };
   setTimeout(() => $('input', form).focus(), 0);
   if (status) updateHomeRepos();
+  renderHomeLists();
 }
 
 function updateHomeRepos() {
@@ -219,15 +223,18 @@ function attachSearchBox(form, input) {
   const render = () => {
     if (!items.length) { list.hidden = true; return; }
     list.innerHTML = items.map((f, i) => {
+      if (f.hdr) return `<li class="hdr">${esc(f.hdr)}</li>`;
+      if (f.q) return `<li data-i="${i}" class="qitem${i === sel ? ' sel' : ''}">${f.saved ? '<span class="star">★</span>' : icons.history}<span class="qtext">${esc(f.name || f.q)}</span>${f.name && f.name !== f.q ? `<span class="dir">${esc(f.q)}</span>` : ''}</li>`;
       if (f.all) return `<li class="searchall${i === sel ? ' sel' : ''}" data-i="${i}">${icons.search.replace('<svg', '<svg style="width:16px;height:16px;fill:currentColor;vertical-align:-3px"')} Search for <b>${esc(input.value)}</b></li>`;
       const j = f.path.lastIndexOf('/');
-      return `<li data-i="${i}" class="${i === sel ? 'sel' : ''}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}<span class="base">${esc(f.path.slice(j + 1))}${f.dir ? '/' : ''}</span><span class="dir">${esc(f.path.slice(0, j + 1))}</span></li>`;
+      return `<li data-i="${i}" class="${i === sel ? 'sel' : ''}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}<span class="base">${esc(f.path.slice(j + 1))}${f.dir ? '/' : ''}</span><span class="dir">${esc(f.path.slice(0, j + 1))}&lrm;</span></li>`;
     }).join('');
     list.hidden = false;
   };
   const choose = i => {
     const f = items[i];
     list.hidden = true;
+    if (f && f.q) { input.value = f.q; submit(); return; }
     if (!f || f.all) { submit(); return; }
     input.blur();
     navigate(fileURL(f.repo, f.path));
@@ -239,9 +246,27 @@ function attachSearchBox(form, input) {
     input.blur();
     navigate(searchURL(q));
   };
+  // With an empty box, offer saved searches, recent searches and files.
+  const showRecent = () => {
+    items = [];
+    const saved = savedList.slice(0, 5), qs = recent.get('q').slice(0, 6), fs = recent.get('f').slice(0, 6);
+    if (saved.length) items.push({hdr: 'Saved searches'}, ...saved.map(x => ({q: x.query, name: x.name, saved: true})));
+    if (qs.length) items.push({hdr: 'Recent searches'}, ...qs.map(q => ({q})));
+    if (fs.length) items.push({hdr: 'Recently viewed'}, ...fs);
+    sel = -1;
+    render();
+  };
+  const selectable = i => items[i] && !items[i].hdr;
+  const step = d => {
+    if (!items.some((_, i) => selectable(i))) return;
+    do { sel = (sel + d + items.length) % items.length; } while (!selectable(sel));
+    render();
+  };
+  input.addEventListener('focus', () => { if (!input.value.trim()) showRecent(); });
   input.addEventListener('input', () => {
     clearTimeout(timer);
     const q = input.value.trim();
+    if (!q) { showRecent(); return; }
     if (q.length < 2) { items = []; render(); return; }
     timer = setTimeout(async () => {
       try {
@@ -255,15 +280,15 @@ function attachSearchBox(form, input) {
     }, 120);
   });
   input.addEventListener('keydown', e => {
-    if (e.key === 'ArrowDown' && items.length) { sel = (sel + 1) % items.length; render(); e.preventDefault(); }
-    else if (e.key === 'ArrowUp' && items.length) { sel = (sel - 1 + items.length) % items.length; render(); e.preventDefault(); }
+    if (e.key === 'ArrowDown' && items.length) { step(1); e.preventDefault(); }
+    else if (e.key === 'ArrowUp' && items.length) { step(-1); e.preventDefault(); }
     else if (e.key === 'Escape') { if (!list.hidden) list.hidden = true; else input.blur(); }
     else if (e.key === 'Enter') { e.preventDefault(); sel >= 0 ? choose(sel) : submit(); }
   });
   input.addEventListener('blur', () => setTimeout(() => list.hidden = true, 150));
   list.addEventListener('mousedown', e => {
     const li = e.target.closest('li');
-    if (li) { e.preventDefault(); choose(+li.dataset.i); }
+    if (li && li.dataset.i) { e.preventDefault(); choose(+li.dataset.i); }
   });
   form.addEventListener('submit', e => { e.preventDefault(); submit(); });
 }
@@ -289,13 +314,14 @@ async function renderSearch(q) {
   }
   if (view !== v) return;
   app.scrollTop = 0;
+  recent.add('q', q);
   const parts = [];
   let summary = r.numFiles === 0 ? 'No results' :
     `<b>${fmtNum(r.numMatches)}</b> match${r.numMatches === 1 ? '' : 'es'} in <b>${fmtNum(r.numFiles)}</b> file${r.numFiles === 1 ? '' : 's'}`;
   summary += ` <span class="muted">(${r.elapsed.toFixed(3)} s)</span>`;
   if (r.timedOut) summary += ' · <span class="warn">search timed out; results are partial</span>';
   else if (r.truncated) summary += ' · <span class="warn">showing the first results only; refine your query</span>';
-  parts.push(`<div class="summary">${summary}</div>`);
+  parts.push(`<div class="summary"><span class="stext">${summary}</span><button class="tbtn savebtn" title="Save this search">☆ Save search</button></div>`);
   if (r.nameMatches && r.nameMatches.length) {
     parts.push(`<div class="namehits"><div class="section-title">Files and folders${r.numNameMatches > r.nameMatches.length ? ` <span class="muted" style="text-transform:none;letter-spacing:0">(${fmtNum(r.numNameMatches)}; <a href="${searchURL('file:' + q)}">see all</a>)</span>` : ''}</div><ul>` +
       r.nameMatches.map(f => `<li><a href="${fileURL(f.repo, f.path)}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}${pathHTML(f.path + (f.dir ? '/' : ''))}</a></li>`).join('') +
@@ -310,6 +336,7 @@ async function renderSearch(q) {
   app.innerHTML = `<div class="sres${side ? '' : ' nofacets'}">${side ? `<aside class="facets">${side}</aside>` : ''}<div class="results">${parts.join('')}</div></div>`;
   bindSnippets($('#filelist'), q);
   appendResults(r, q);
+  setupSaveButton(q);
 }
 
 // ---- filter sidebar ----
@@ -377,7 +404,7 @@ function fileResultHTML(f, q, max) {
   const unshown = f.numMatches - f.lines.length;
   return `<div class="fr" data-repo="${esc(f.repo)}" data-path="${esc(f.path)}">
     <div class="fr-head"><span class="repo-chip">${esc(f.repo)}</span><a href="${fileURL(f.repo, f.path, {q})}">${pathHTML(f.path)}</a>
-      <span class="meta">${esc(f.lang)}${f.numMatches ? ` · ${fmtNum(f.numMatches)} match${f.numMatches === 1 ? '' : 'es'}` : ''}</span></div>
+      <span class="meta">${esc(f.lang)}${f.numMatches ? ` · ${fmtNum(f.numMatches)} match${f.numMatches === 1 ? '' : 'es'}` : ''}</span>${f.lines.length && q ? '<button class="ctxbtn" title="Show the lines around each match">± context</button>' : ''}</div>
     ${f.lines.length ? `<table class="snip">${snippetRows(f, shown, q)}</table>` : ''}
     ${rest > 0 ? `<button class="more" data-more="1">Show ${rest} more match${rest === 1 ? '' : 'es'}</button>` :
       unshown > 0 ? `<a class="more" href="${fileURL(f.repo, f.path, {q})}">View all ${fmtNum(f.numMatches)} matches in file</a>` : ''}
@@ -386,11 +413,20 @@ function fileResultHTML(f, q, max) {
 
 function bindSnippets(root, q) {
   root.addEventListener('click', e => {
+    const ctx = e.target.closest('button.ctxbtn');
+    if (ctx) {
+      const fr = ctx.closest('.fr');
+      fr._ctx = !fr._ctx;
+      ctx.classList.toggle('on', fr._ctx);
+      renderSnippet(fr, q);
+      return;
+    }
     const more = e.target.closest('button[data-more]');
     if (more) {
       const fr = more.closest('.fr');
       const f = fr._file;
-      $('table.snip', fr).innerHTML = snippetRows(f, f.lines, q);
+      fr._all = true;
+      renderSnippet(fr, q);
       const unshown = f.numMatches - f.lines.length;
       if (unshown > 0) more.outerHTML = `<a class="more" href="${fileURL(f.repo, f.path, {q})}">View all ${fmtNum(f.numMatches)} matches in file</a>`;
       else more.remove();
@@ -446,6 +482,7 @@ async function renderFile(repo, path, q, rev, at) {
   }
   if (view !== v) return;
   v.data = r;
+  if (r.kind === 'file' && !rev) recent.add('f', {repo, path});
   wrap.scrollTop = 0;
   if (r.kind === 'dir') {
     head.innerHTML = crumbsHTML(repo, path) + `<span class="finfo">${fmtNum(r.entries.length)} items</span>`;
@@ -471,13 +508,23 @@ async function renderFile(repo, path, q, rev, at) {
       ${r.git ? `<button class="tbtn" data-act="blame" title="Show who last changed each line (b)">Blame</button>
       <button class="tbtn" data-act="history" title="Show the file's history (h)">History</button>` : ''}
       <button class="iconbtn" data-act="tree" title="Toggle sidebar (t)">${icons.tree}</button>
-      <button class="iconbtn" data-act="copy" title="Copy path">${icons.copy}</button>
+      <button class="iconbtn" data-act="find" title="Find in file (f)">${icons.search}</button>
+      <span class="menuwrap"><button class="iconbtn" data-act="links" title="Copy path or link (y copies a permalink)">${icons.link}</button>
+        <span class="menu" hidden>
+          <button data-copy="path">Copy path</button>
+          <button data-copy="link">Copy link${location.hash.startsWith('#L') ? ' to selected lines' : ''}</button>
+          ${r.head || rev ? '<button data-copy="permalink">Copy permalink (this commit)</button>' : ''}
+          <button data-copy="raw">Copy raw file URL</button>
+        </span></span>
       <a class="iconbtn" href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank" title="Raw file">${icons.raw}</a>
     </span>`;
   head.onclick = e => {
+    const c = e.target.closest('[data-copy]');
+    if (c) { copyLink(c.dataset.copy); closeMenus(); return; }
     const b = e.target.closest('[data-act]');
     if (!b) return;
-    if (b.dataset.act === 'copy') { navigator.clipboard?.writeText(path).then(() => toast('Path copied')); }
+    if (b.dataset.act === 'find') openFind();
+    if (b.dataset.act === 'links') { e.stopPropagation(); toggleLinksMenu(); }
     if (b.dataset.act === 'tree') toggleTree();
     if (b.dataset.act === 'blame') toggleBlame();
     if (b.dataset.act === 'history') showHistory();
@@ -657,17 +704,10 @@ document.addEventListener('click', e => {
 
 function setupFind(head, wrap, q) {
   const marks = $$('mark', wrap);
-  const nav = $('.findnav', head);
-  if (!q || !marks.length) { view.marks = null; return; }
-  view.marks = marks; view.markIdx = -1;
-  nav.hidden = false;
-  const update = () => {
-    nav.innerHTML = `<span>${view.markIdx + 1 || '–'} of ${fmtNum(marks.length)}</span>
-      <button class="iconbtn" data-dir="-1" title="Previous match (N)">↑</button><button class="iconbtn" data-dir="1" title="Next match (n)">↓</button>`;
-  };
-  view.findUpdate = update;
-  update();
-  nav.onclick = e => { const b = e.target.closest('button'); if (b) gotoMark(+b.dataset.dir); };
+  view.qmarks = q && marks.length ? marks : null;
+  view.find = null;
+  renderFindNav();
+  if (!view.qmarks) return;
   // Start at the linked line, or the first match.
   if (!location.hash) gotoMark(1);
   else {
@@ -677,11 +717,130 @@ function setupFind(head, wrap, q) {
   }
 }
 
+// renderFindNav shows the match counter and arrows: for the find bar's
+// text when it is open, otherwise for the search query's matches.
+function renderFindNav() {
+  const nav = $('.fhead .findnav', app);
+  if (!nav) return;
+  const find = view.find;
+  view.marks = find ? find.marks : view.qmarks;
+  view.markIdx = find ? find.idx : (view.qidx ?? -1);
+  if (!find && !view.qmarks) { nav.hidden = true; nav.innerHTML = ''; return; }
+  nav.hidden = false;
+  nav.innerHTML = (find ? `<input class="findinput" type="text" placeholder="Find in file" spellcheck="false" aria-label="Find in file" value="${esc(find.text)}">` : '') +
+    '<span class="fcount"></span><button class="iconbtn" data-dir="-1" title="Previous match (N)">↑</button><button class="iconbtn" data-dir="1" title="Next match (n)">↓</button>' +
+    (find ? '<button class="iconbtn" data-close="1" title="Close (Esc)">✕</button>' : '');
+  view.findUpdate = () => {
+    const n = view.marks ? view.marks.length : 0;
+    $('.fcount', nav).textContent = find && !find.text ? '' : n ? `${view.markIdx + 1 || '–'} of ${fmtNum(n)}${n >= MAX_FIND ? '+' : ''}` : 'No matches';
+  };
+  view.findUpdate();
+  nav.onclick = e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.close) closeFind();
+    else gotoMark(+b.dataset.dir);
+  };
+  const input = $('.findinput', nav);
+  if (!input) return;
+  let timer = 0;
+  input.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => runFind(input.value), 150);
+  };
+  input.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); gotoMark(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  };
+}
+
+const MAX_FIND = 10000;
+
+function openFind() {
+  const v = view;
+  if (!v || v.kind !== 'file' || v.preview || !$('.codewrap .code', app)) return;
+  if (!v.find) {
+    v.qidx = v.markIdx;
+    v.marks?.[v.markIdx]?.classList.remove('cur');
+    v.find = {text: '', marks: [], idx: -1};
+    renderFindNav();
+  }
+  const input = $('.fhead .findinput', app);
+  input.focus();
+  input.select();
+}
+
+function closeFind() {
+  clearFindMarks();
+  view.find = null;
+  renderFindNav();
+  view.marks?.[view.markIdx]?.classList.add('cur');
+}
+
+function clearFindMarks() {
+  const parents = new Set();
+  $$('.codewrap mark.ff', app).forEach(m => { parents.add(m.parentNode); m.replaceWith(...m.childNodes); });
+  parents.forEach(p => p.normalize());
+}
+
+// runFind highlights every case-insensitive occurrence of text in the
+// code, wrapping the matched text (which may span several syntax
+// highlighting spans) in <mark class="ff"> elements.
+function runFind(text) {
+  const find = view.find;
+  if (!find) return;
+  clearFindMarks();
+  find.text = text;
+  find.marks = [];
+  find.idx = -1;
+  if (text) {
+    const needle = text.toLowerCase();
+    for (const src of $$('.codewrap .code .src', app)) {
+      const hay = src.textContent.toLowerCase();
+      const found = [];
+      for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) found.push(i);
+      // Wrap from the end so earlier offsets stay valid.
+      for (let k = found.length - 1; k >= 0; k--) wrapText(src, found[k], found[k] + needle.length);
+      if (found.length) find.marks.push(...$$('mark.ff', src).filter(m => !m.dataset.part));
+      if (find.marks.length >= MAX_FIND) break;
+    }
+  }
+  view.marks = find.marks;
+  view.markIdx = -1;
+  if (find.marks.length) gotoMark(1);
+  else view.findUpdate();
+}
+
+// wrapText wraps the characters [a, b) of el's text in mark.ff elements,
+// one per text node the range touches. All but the first get data-part
+// so that each match is counted once.
+function wrapText(el, a, b) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  for (let off = 0, n = walker.nextNode(); n; n = walker.nextNode()) {
+    const len = n.textContent.length;
+    if (off + len > a && off < b) nodes.push([n, Math.max(0, a - off), Math.min(len, b - off)]);
+    off += len;
+    if (off >= b) break;
+  }
+  nodes.forEach(([n, x, y], i) => {
+    let mid = n;
+    if (x > 0) mid = n.splitText(x);
+    if (y - x < mid.textContent.length) mid.splitText(y - x);
+    const m = document.createElement('mark');
+    m.className = 'ff';
+    if (i > 0) m.dataset.part = '1';
+    mid.replaceWith(m);
+    m.append(mid);
+  });
+}
+
 function gotoMark(dir, noScroll) {
   const marks = view.marks;
-  if (!marks) return;
+  if (!marks || !marks.length) return;
   marks[view.markIdx]?.classList.remove('cur');
   view.markIdx = (view.markIdx + dir + marks.length) % marks.length;
+  if (view.find) view.find.idx = view.markIdx;
   const m = marks[view.markIdx];
   m.classList.add('cur');
   view.findUpdate();
@@ -854,7 +1013,7 @@ function setupDrag(panel) {
 // ---- keyboard result navigation (j / k) ----
 
 function moveCursor(d) {
-  const rows = $$('#filelist tr.row');
+  const rows = $$('#filelist tr.row:not(.ctx)');
   if (!rows.length) return;
   rows[view.cursor]?.classList.remove('kcur');
   view.cursor = Math.max(0, Math.min(rows.length - 1, (view.cursor ?? -1) + d));
@@ -864,7 +1023,7 @@ function moveCursor(d) {
 }
 
 function openCursor() {
-  const row = $$('#filelist tr.row')[view.cursor];
+  const row = $$('#filelist tr.row:not(.ctx)')[view.cursor];
   if (row) navigate(row.dataset.href);
 }
 
@@ -1094,6 +1253,179 @@ function renderCommit(panel, p) {
   };
 }
 
+// ---- clipboard and links ----
+
+// copyText copies s to the clipboard. The async clipboard API only
+// exists in secure contexts (https or localhost), so over plain http
+// (e.g. a Tailscale address) fall back to a hidden textarea.
+async function copyText(s) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(s); return true; }
+  } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = s;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.append(ta);
+  ta.select();
+  ta.setSelectionRange(0, s.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  return ok;
+}
+
+function toggleLinksMenu() {
+  const m = $('.fhead .menu', app);
+  if (!m) return;
+  const open = m.hidden;
+  closeMenus();
+  m.hidden = !open;
+}
+
+function closeMenus() {
+  let closed = false;
+  $$('.menu', app).forEach(m => { if (!m.hidden) { m.hidden = true; closed = true; } });
+  return closed;
+}
+document.addEventListener('click', e => { if (!e.target.closest('.menuwrap')) closeMenus(); });
+
+// copyLink copies a link to the current file. A permalink pins the
+// current commit, so it keeps pointing at the same code after the file
+// changes. With pin, the address bar is also switched to the permalink.
+async function copyLink(kind, pin) {
+  const v = view, r = v.data;
+  if (!r) return;
+  const hash = location.hash.startsWith('#L') ? location.hash : '';
+  let text, label;
+  switch (kind) {
+    case 'path': text = v.path; label = 'Path copied'; break;
+    case 'raw': text = location.origin + '/raw/' + encodeURIComponent(v.repo) + '/' + encPath(v.path); label = 'Raw file URL copied'; break;
+    case 'permalink': {
+      const rev = v.rev || r.head;
+      if (!rev) { kind = 'link'; break; }
+      const u = fileURL(v.repo, v.path, {rev, at: v.at || r.gitPath}) + hash;
+      text = location.origin + u; label = 'Permalink copied';
+      if (pin) history.replaceState(null, '', u);
+      break;
+    }
+  }
+  if (kind === 'link') { text = location.origin + fileURL(v.repo, v.path) + hash; label = 'Link copied'; }
+  toast(await copyText(text) ? label : 'Could not copy to the clipboard');
+}
+
+// ---- recent searches and files (per browser) ----
+
+const recent = {
+  max: {q: 50, f: 30},
+  get(kind) {
+    try { return JSON.parse(localStorage.getItem('cs-recent-' + kind)) || []; } catch (e) { return []; }
+  },
+  add(kind, item) {
+    const key = x => kind === 'q' ? x : x.repo + '\0' + x.path;
+    const list = [item, ...this.get(kind).filter(x => key(x) !== key(item))].slice(0, this.max[kind]);
+    try { localStorage.setItem('cs-recent-' + kind, JSON.stringify(list)); } catch (e) {}
+  },
+  clear(kind) {
+    try { localStorage.removeItem('cs-recent-' + kind); } catch (e) {}
+  },
+};
+
+// ---- saved searches (shared, stored by the server) ----
+
+let savedList = [];
+async function loadSaved() {
+  try { savedList = (await api('saved')).saved || []; } catch (e) {}
+  if (view && view.kind === 'home') renderHomeLists();
+  if (view && view.kind === 'search') setupSaveButton(view.q);
+}
+
+async function setSaved(query, add, name) {
+  try {
+    const r = await fetch('/api/saved', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Requested-With': 'cs'},
+      body: JSON.stringify({action: add ? 'add' : 'remove', query, name: name || ''}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    savedList = data.saved;
+    toast(add ? 'Search saved' : 'Saved search removed');
+  } catch (e) { toast(e.message); }
+}
+
+function setupSaveButton(q) {
+  const b = $('.savebtn', app);
+  if (!b) return;
+  const saved = savedList.some(x => x.query === q);
+  b.textContent = saved ? '★ Saved' : '☆ Save search';
+  b.classList.toggle('on', saved);
+  b.title = saved ? 'Remove from saved searches' : 'Save this search';
+  b.onclick = async () => {
+    if (saved) await setSaved(q, false);
+    else {
+      const name = prompt('Name for this saved search:', q);
+      if (name === null) return;
+      await setSaved(q, true, name);
+    }
+    setupSaveButton(q);
+  };
+}
+
+function renderHomeLists() {
+  const el = $('#homelists');
+  if (!el) return;
+  const qs = recent.get('q').slice(0, 8), fs = recent.get('f').slice(0, 8);
+  let html = '';
+  if (savedList.length) {
+    html += '<div class="section-title"><span>Saved searches</span></div><div class="hlist">' +
+      savedList.map(x => `<span class="hchip saved"><a href="${searchURL(x.query)}" title="${esc(x.query)}"><span class="star">★</span>${esc(x.name)}</a><button data-unsave="${esc(x.query)}" title="Remove">×</button></span>`).join('') + '</div>';
+  }
+  if (qs.length) {
+    html += '<div class="section-title"><span>Recent searches</span><span class="grow"></span><button class="btn" data-clear="q">Clear</button></div><div class="hlist">' +
+      qs.map(q => `<span class="hchip"><a href="${searchURL(q)}">${esc(q)}</a></span>`).join('') + '</div>';
+  }
+  if (fs.length) {
+    html += '<div class="section-title"><span>Recently viewed</span><span class="grow"></span><button class="btn" data-clear="f">Clear</button></div><ul class="rfiles">' +
+      fs.map(f => `<li><a href="${fileURL(f.repo, f.path)}"><span class="repo-chip">${esc(f.repo)}</span>${icons.file}${pathHTML(f.path)}</a></li>`).join('') + '</ul>';
+  }
+  el.innerHTML = html;
+  el.onclick = async e => {
+    const un = e.target.closest('[data-unsave]');
+    if (un) { await setSaved(un.dataset.unsave, false); renderHomeLists(); }
+    const cl = e.target.closest('[data-clear]');
+    if (cl) { recent.clear(cl.dataset.clear); renderHomeLists(); }
+  };
+}
+
+// ---- context lines in search results ----
+
+const CONTEXT = 3;
+
+// renderSnippet redraws a file's result: the matching lines (all of them
+// once expanded) and, with context on, the lines around them.
+async function renderSnippet(fr, q) {
+  const f = fr._file;
+  const lines = fr._all ? f.lines : f.lines.slice(0, SNIP_LINES);
+  const table = $('table.snip', fr);
+  if (!fr._ctx) { table.innerHTML = snippetRows(f, lines, q); return; }
+  let r;
+  try {
+    r = await api('context', {repo: f.repo, path: f.path, q, n: CONTEXT, lines: lines.map(l => l.line).join(',')});
+  } catch (e) { if (!isAbort(e)) toast(e.message); return; }
+  if (!fr._ctx) return;
+  const match = new Map(lines.map(l => [l.line, l]));
+  let prev = -1, out = '';
+  for (const c of r.lines) {
+    if (prev >= 0 && c.line !== prev + 1) out += '<tr class="gap"><td colspan="2"></td></tr>';
+    const m = match.get(c.line);
+    const href = fileURL(f.repo, f.path, {q, line: c.line});
+    out += `<tr class="row${m ? (m.def ? ' def' : '') : ' ctx'}" data-href="${esc(href)}"><td class="ln"><a href="${esc(href)}">${c.line}</a></td><td class="code">${m ? m.html : c.html}</td></tr>`;
+    prev = c.line;
+  }
+  table.innerHTML = out;
+}
+
 // ---- keyboard ----
 
 document.addEventListener('keydown', e => {
@@ -1102,13 +1434,15 @@ document.addEventListener('keydown', e => {
   const input = document.body.classList.contains('home') ? $('#app input') : qbox;
   if (e.key === '/') { e.preventDefault(); input.focus(); input.select(); }
   else if (e.key === '?') { $('#help').showModal(); }
-  else if (e.key === 'Escape') { closePanel(); }
+  else if (e.key === 'Escape') { if (closeMenus()) return; if (view && view.find) closeFind(); else closePanel(); }
   else if (e.key === 't' && view && view.kind === 'file') { toggleTree(); }
   else if ((e.key === 'j' || e.key === 'k') && view && view.kind === 'search') { e.preventDefault(); moveCursor(e.key === 'j' ? 1 : -1); }
   else if ((e.key === 'Enter' || e.key === 'o') && view && view.kind === 'search' && view.cursor >= 0) { openCursor(); }
   else if (e.key === 'b' && view && view.kind === 'file' && view.data && view.data.git && !view.preview) { toggleBlame(); }
   else if (e.key === 'h' && view && view.kind === 'file' && view.data && view.data.git) { showHistory(); }
   else if (e.key === 'o' && view && view.kind === 'file') { e.preventDefault(); setSideTab('outline', true); }
+  else if (e.key === 'f' && view && view.kind === 'file') { e.preventDefault(); openFind(); }
+  else if (e.key === 'y' && view && view.kind === 'file' && view.data && view.data.kind === 'file') { copyLink('permalink', true); }
   else if ((e.key === 'n' || e.key === 'N') && view && view.marks) { gotoMark(e.key === 'n' ? 1 : -1); }
 });
 
@@ -1126,3 +1460,4 @@ $('#helpbtn').onclick = () => $('#help').showModal();
 attachSearchBox($('#topsearch'), qbox);
 route();
 pollStatus();
+loadSaved();

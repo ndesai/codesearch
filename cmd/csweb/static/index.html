@@ -43,6 +43,7 @@
     <tr><td><code>-foo</code>, <code>NOT foo</code></td><td>Exclude files containing <i>foo</i>.</td></tr>
     <tr><td><code>(a OR b) -file:test</code></td><td>Group with parentheses. <code>file:</code> and <code>lang:</code> work inside groups too.</td></tr>
     <tr><td><code>file:\.cc$</code></td><td>File path matches a regular expression (also <code>f:</code>, <code>-file:</code>).</td></tr>
+    <tr><td><code>file:src/**/*.kt</code></td><td>Path glob: <code>*</code> within a folder, <code>**</code> across folders; a leading <code>/</code> anchors at the repository root.</td></tr>
     <tr><td><code>lang:java</code></td><td>Language: <code>c</code>, <code>c++</code>, <code>java</code>, <code>kotlin</code>, <code>go</code>, <code>py</code>, <code>rust</code>, <code>ts</code>, <code>bp</code>, <code>aidl</code>, … (also <code>-lang:</code>).</td></tr>
     <tr><td><code>repo:aosp</code></td><td>Repository name (also <code>r:</code>, <code>-repo:</code>).</td></tr>
     <tr><td><code>sym:Activity</code></td><td>Definitions of a symbol.</td></tr>
@@ -58,7 +59,9 @@
   <table>
     <tr><td><kbd>/</kbd></td><td>Focus the search box</td></tr>
     <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / previous search result; <kbd>Enter</kbd> or <kbd>o</kbd> opens it</td></tr>
+    <tr><td><kbd>f</kbd></td><td>Find text in the current file</td></tr>
     <tr><td><kbd>n</kbd> / <kbd>N</kbd></td><td>Next / previous match in file</td></tr>
+    <tr><td><kbd>y</kbd></td><td>Copy a permalink to this file (pinned to the current commit)</td></tr>
     <tr><td><kbd>b</kbd></td><td>Toggle blame (who last changed each line)</td></tr>
     <tr><td><kbd>h</kbd></td><td>Show the file's git history</td></tr>
     <tr><td><kbd>o</kbd></td><td>Show and filter the file outline</td></tr>

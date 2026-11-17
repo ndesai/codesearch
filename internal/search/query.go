@@ -522,9 +522,13 @@ func (p *parser) atom(t token) (*Node, error) {
 	}
 	switch key {
 	case "file", "f", "path":
-		re, err := stdregexp.Compile(smartCase(val, q.Case) + val)
+		pat := val
+		if isGlob(val) {
+			pat = globToRegexp(val)
+		}
+		re, err := stdregexp.Compile(smartCase(val, q.Case) + pat)
 		if err != nil {
-			re = stdregexp.MustCompile("(?i)" + stdregexp.QuoteMeta(val))
+			re = stdregexp.MustCompile(smartCase(val, q.Case) + stdregexp.QuoteMeta(val))
 		}
 		return wrap(&Node{Op: OpFile, File: re})
 	case "lang", "l", "language":
@@ -560,6 +564,48 @@ func (p *parser) atom(t token) (*Node, error) {
 		return wrap(q.leaf(term))
 	}
 	return nil, nil
+}
+
+// isGlob reports whether a file: value is a glob like "*.kt" or
+// "src/**/*.go" rather than a regular expression: it contains * but no
+// regexp-only syntax (such as ".*", "\\", "^", "$", "(", "|" or "+").
+func isGlob(v string) bool {
+	return strings.Contains(v, "*") && !strings.Contains(v, ".*") && !strings.ContainsAny(v, `\^$()|+{}[`)
+}
+
+// globToRegexp converts a path glob to a regexp. "*" matches within a
+// path element, "**" across elements and "?" one character. A leading
+// "/" anchors the glob at the repository root; otherwise it may match
+// any trailing part of the path made of whole elements.
+func globToRegexp(g string) string {
+	var b strings.Builder
+	if strings.HasPrefix(g, "/") {
+		b.WriteString("^")
+		g = g[1:]
+	} else {
+		b.WriteString("(?:^|/)")
+	}
+	for i := 0; i < len(g); i++ {
+		switch c := g[i]; {
+		case strings.HasPrefix(g[i:], "**/"):
+			b.WriteString("(?:.*/)?")
+			i += 2
+		case strings.HasPrefix(g[i:], "**"):
+			b.WriteString(".*")
+			i++
+		case c == '*':
+			b.WriteString("[^/]*")
+		case c == '?':
+			b.WriteString("[^/]")
+		default:
+			b.WriteString(stdregexp.QuoteMeta(string(c)))
+		}
+	}
+	if strings.HasSuffix(g, "/") {
+		return b.String() // a directory: match everything inside
+	}
+	b.WriteString("$")
+	return b.String()
 }
 
 // smartCase returns the regexp flag prefix for text under the case

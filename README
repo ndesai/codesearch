@@ -52,6 +52,7 @@ Searching
 	(a OR b) -c     grouping; file: and lang: work inside groups too
 	"foo(bar"       literal text
 	file:\.cc$      path matches a regexp (-file: to exclude; also f:)
+	file:src/**/*.kt  path glob (* within a folder, ** across folders)
 	lang:java       language (c, c++, java, kotlin, go, py, rust, ts, bp, aidl, ...)
 	repo:aosp       repository name (-repo: to exclude)
 	sym:Activity    definitions of a symbol
@@ -67,7 +68,12 @@ line and History (h) lists the commits that changed the file, with
 diffs and links to view the file as of each commit. The sidebar's
 Outline tab (o) lists the file's classes, functions and methods.
 In search results, the sidebar narrows results by repository, language
-and directory, and j/k move between matches.
+and directory, j/k move between matches, and "± context" shows the
+lines around each match. Press f to find text in a file and y to copy
+a permalink pinned to the current commit (the link button has more
+copy options). Saved searches (☆ on the results page) are stored on the
+server and shared by every device; recent searches and files are kept
+in each browser, and both appear on the home page and in the search box.
 Press / to search, ? for help.
 
 The indexer honors .gitignore files (and .git/info/exclude) in the

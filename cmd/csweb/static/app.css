@@ -384,3 +384,41 @@ dialog#help .close { position: absolute; right: 10px; top: 10px; }
 .diff .d-hunk td { color: var(--text-3); background: var(--bg-alt); padding: 3px 16px; }
 .diff .d-file td { font: 600 13px var(--mono); padding: 10px 16px 4px; color: var(--text); }
 .diff .d-info td { color: var(--text-3); padding: 2px 16px; }
+
+/* ---- saved searches, history, context, links, find ---- */
+.summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.summary .stext { flex: 1; min-width: 0; }
+.savebtn.on { color: #b06000; background: var(--mark); }
+.star { color: #f9ab00; }
+.ctxbtn { border: 0; background: none; color: var(--link); cursor: pointer; font: 12px var(--sans); padding: 0 0 0 10px; white-space: nowrap; }
+.ctxbtn:hover { text-decoration: underline; }
+.ctxbtn.on { font-weight: 600; }
+.snip tr.ctx td.code { color: var(--text-2); }
+.snip tr.ctx td.ln a { color: var(--border); }
+.suggest li.hdr { cursor: default; font: 500 11px var(--sans); color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; padding: 8px 14px 2px; }
+.suggest li.hdr:hover { background: none; }
+.suggest li.qitem { align-items: center; }
+.suggest li .qtext { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.suggest li .star { width: 15px; text-align: center; flex: none; }
+#homelists .section-title { margin-top: 4px; }
+.hlist { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.hchip { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 16px; font: 13px var(--mono); max-width: 100%; }
+.hchip a { padding: 4px 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hchip a:hover { text-decoration: none; background: var(--bg-hover); border-radius: 16px; }
+.hchip.saved a { font-family: var(--sans); }
+.hchip .star { margin-right: 6px; }
+.hchip button { border: 0; background: none; color: var(--text-3); cursor: pointer; padding: 0 10px 0 0; font-size: 15px; }
+.hchip button:hover { color: var(--text); }
+.rfiles { list-style: none; margin: 0 0 22px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.rfiles a { font: 13px var(--mono); display: inline-flex; gap: 8px; align-items: center; }
+.rfiles .ico { width: 15px; height: 15px; fill: var(--text-2); }
+.menuwrap { position: relative; display: inline-flex; }
+.menu { position: absolute; right: 0; top: 34px; z-index: 40; background: var(--bg); border-radius: 8px; box-shadow: var(--shadow); padding: 6px 0; min-width: 240px; display: flex; flex-direction: column; }
+.menu[hidden] { display: none; }
+.menu button { border: 0; background: none; text-align: left; padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--text); white-space: nowrap; }
+.menu button:hover { background: var(--bg-hover); }
+.findinput { width: 180px; border: 0; background: transparent; color: var(--text); font: 13px var(--mono); outline: none; padding: 4px 0; }
+.findnav .fcount { min-width: 4.5em; text-align: right; }
+mark.ff { background: var(--sym); }
+mark.ff.cur { background: var(--mark-cur); }
+@media (max-width: 800px) { .findinput { width: 110px; } }

@@ -291,8 +291,14 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 
 	langName := lang.Detect(rel).Name
 	resp := map[string]any{"kind": "file", "repo": repo.Name, "path": rel, "lang": langName}
-	if _, _, err := gitFile(r.Context(), abs); err == nil {
+	if top, grel, err := gitFile(r.Context(), abs); err == nil {
 		resp["git"] = true
+		resp["gitPath"] = grel // path within the git work tree, for permalinks
+		if rev == "" {
+			if out, err := runGit(r.Context(), top, "rev-parse", "HEAD"); err == nil {
+				resp["head"] = strings.TrimSpace(string(out))
+			}
+		}
 	}
 	var data []byte
 	if rev != "" {
@@ -546,4 +552,147 @@ func (s *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Security-Policy", "sandbox allow-scripts allow-forms allow-popups allow-modals; frame-ancestors 'self'")
 	h.Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, "", st.ModTime(), struct{ io.ReadSeeker }{f})
+}
+
+// handleContext returns highlighted lines around the given line numbers
+// of a file, for expanding search results in place.
+func (s *server) handleContext(w http.ResponseWriter, r *http.Request) {
+	repo := s.engine.Repo(r.FormValue("repo"))
+	if repo == nil {
+		writeError(w, http.StatusNotFound, errors.New("unknown repository"))
+		return
+	}
+	abs, err := repo.Abs(r.FormValue("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	n, _ := strconv.Atoi(r.FormValue("n"))
+	n = max(0, min(n, 20))
+	want := map[int]bool{}
+	for _, f := range strings.Split(r.FormValue("lines"), ",") {
+		l, err := strconv.Atoi(f)
+		if err != nil || l < 1 {
+			continue
+		}
+		for i := l - n; i <= l+n; i++ {
+			want[i] = true
+		}
+		if len(want) > 5000 {
+			break
+		}
+	}
+	st, err := os.Stat(abs)
+	if err != nil || st.IsDir() || st.Size() > maxViewBytes {
+		writeError(w, http.StatusNotFound, errors.New("file not available"))
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil || !isText(data) {
+		writeError(w, http.StatusNotFound, errors.New("file not available"))
+		return
+	}
+	var terms []*search.Term
+	if q, err := search.ParseQuery(r.FormValue("q")); err == nil {
+		terms = q.Terms
+	}
+	lx := lang.Detect(r.FormValue("path")).Lexer
+	src := strings.ToValidUTF8(string(data), "�")
+	var out []apiLine
+	for i, line := range strings.Split(src, "\n") {
+		if !want[i+1] {
+			continue
+		}
+		line = strings.TrimSuffix(line, "\r")
+		var ranges [][2]int
+		for _, t := range terms {
+			for _, m := range t.Std.FindAllStringIndex(line, 50) {
+				if m[1] > m[0] {
+					ranges = append(ranges, [2]int{m[0], m[1]})
+				}
+			}
+		}
+		slices.SortFunc(ranges, func(a, b [2]int) int { return a[0] - b[0] })
+		if len(line) > 2000 {
+			line, ranges = line[:2000], nil
+		}
+		out = append(out, apiLine{Line: i + 1, HTML: highlightSnippet(lx, line, ranges)})
+	}
+	writeJSON(w, map[string]any{"lines": out})
+}
+
+// --- saved searches ---
+
+// Saved searches are stored on the server (in the index directory) so
+// they are shared by every browser and device using this instance.
+type savedSearch struct {
+	Name    string    `json:"name"`
+	Query   string    `json:"query"`
+	Created time.Time `json:"created"`
+}
+
+var savedMu sync.Mutex
+
+func (s *server) savedFile() string {
+	return filepath.Join(s.engine.Config().IndexDir, "saved-searches.json")
+}
+
+func (s *server) loadSaved() []savedSearch {
+	var list []savedSearch
+	if data, err := os.ReadFile(s.savedFile()); err == nil {
+		json.Unmarshal(data, &list)
+	}
+	return list
+}
+
+func (s *server) handleSaved(w http.ResponseWriter, r *http.Request) {
+	savedMu.Lock()
+	defer savedMu.Unlock()
+	list := s.loadSaved()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Action string `json:"action"` // "add" or "remove"
+			Query  string `json:"query"`
+			Name   string `json:"name"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		req.Query = strings.TrimSpace(req.Query)
+		req.Name = strings.TrimSpace(req.Name)
+		if req.Query == "" || len(req.Query) > 2000 || len(req.Name) > 200 {
+			writeError(w, http.StatusBadRequest, errors.New("invalid saved search"))
+			return
+		}
+		list = slices.DeleteFunc(list, func(x savedSearch) bool { return x.Query == req.Query })
+		switch req.Action {
+		case "add":
+			if req.Name == "" {
+				req.Name = req.Query
+			}
+			list = append([]savedSearch{{Name: req.Name, Query: req.Query, Created: time.Now()}}, list...)
+			if len(list) > 500 {
+				list = list[:500]
+			}
+		case "remove":
+		default:
+			writeError(w, http.StatusBadRequest, errors.New("unknown action"))
+			return
+		}
+		data, _ := json.MarshalIndent(list, "", "  ")
+		tmp := s.savedFile() + ".tmp"
+		if err := os.WriteFile(tmp, data, 0644); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := os.Rename(tmp, s.savedFile()); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	if list == nil {
+		list = []savedSearch{}
+	}
+	writeJSON(w, map[string]any{"saved": list})
 }

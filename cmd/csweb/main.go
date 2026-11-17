@@ -116,6 +116,8 @@ func main() {
 	mux.HandleFunc("/api/blame", s.handleBlame)
 	mux.HandleFunc("/api/history", s.handleHistory)
 	mux.HandleFunc("/api/commit", s.handleCommit)
+	mux.HandleFunc("/api/context", s.handleContext)
+	mux.HandleFunc("/api/saved", s.handleSaved)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/preview/", s.handlePreview)
 	index, err := fs.ReadFile(static, "index.html")

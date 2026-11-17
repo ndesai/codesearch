@@ -384,6 +384,47 @@ func TestParseQuery(t *testing.T) {
 	}
 }
 
+func TestFileGlobs(t *testing.T) {
+	tests := []struct {
+		glob string
+		yes  []string
+		no   []string
+	}{
+		{"*.java", []string{"a/B.java", "B.java"}, []string{"a/B.javax", "a/java/x.go"}},
+		{"src/**/*.kt", []string{"src/a.kt", "x/src/a/b/c.kt"}, []string{"src2/a.kt", "src/a.kts"}},
+		{"/tools/*", []string{"tools/build.go"}, []string{"x/tools/build.go", "tools/test/a.go"}},
+		{"/tools/**", []string{"tools/test/a.go"}, []string{"x/tools/a.go"}},
+		{"test/", []string{"tools/test/a.go"}, []string{"tools/testing/a.go"}},
+		{"Rect.?pp", []string{"native/Rect.cpp"}, []string{"native/Rect.h"}},
+	}
+	for _, tt := range tests {
+		// Globs only apply when the value has a "*"; force it for "?" cases.
+		q, err := ParseQuery("file:" + tt.glob)
+		if !isGlob(tt.glob) {
+			q, err = ParseQuery("file:" + strings.ReplaceAll(globToRegexp(tt.glob), `\`, `\`))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range tt.yes {
+			if !q.PathMatch(p) {
+				t.Errorf("file:%s should match %s", tt.glob, p)
+			}
+		}
+		for _, p := range tt.no {
+			if q.PathMatch(p) {
+				t.Errorf("file:%s should not match %s", tt.glob, p)
+			}
+		}
+	}
+	// Regexps stay regexps.
+	for _, re := range []string{`\.java$`, `.*_test\.go`, `^tools/`, `(a|b)*`} {
+		if isGlob(re) {
+			t.Errorf("%q treated as a glob", re)
+		}
+	}
+}
+
 func TestBooleanSearch(t *testing.T) {
 	e := newTestEngine(t)
 	tests := []struct {
