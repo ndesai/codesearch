@@ -83,6 +83,12 @@ The index takes roughly 10% of the size of the indexed source.
 Requires [Go](https://go.dev/dl/) 1.23 or newer, and `git` for blame and history.
 
 ```sh
+go install github.com/ndesai/codesearch/cmd/...@latest
+```
+
+or, from a clone:
+
+```sh
 git clone https://github.com/ndesai/codesearch
 cd codesearch
 go install ./cmd/...

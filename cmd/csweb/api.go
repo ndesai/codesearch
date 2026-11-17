@@ -24,11 +24,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/google/codesearch/internal/gitignore"
-	"github.com/google/codesearch/internal/indexer"
-	"github.com/google/codesearch/internal/lang"
-	"github.com/google/codesearch/internal/outline"
-	"github.com/google/codesearch/internal/search"
+	"github.com/ndesai/codesearch/internal/gitignore"
+	"github.com/ndesai/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/internal/outline"
+	"github.com/ndesai/codesearch/internal/search"
 )
 
 type server struct {

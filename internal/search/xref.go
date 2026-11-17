@@ -18,9 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/lang"
-	"github.com/google/codesearch/regexp"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/regexp"
 )
 
 func errorf(format string, args ...any) error { return fmt.Errorf(format, args...) }

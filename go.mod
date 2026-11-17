@@ -1,4 +1,4 @@
-module github.com/google/codesearch
+module github.com/ndesai/codesearch
 
 go 1.23
 

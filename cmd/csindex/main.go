@@ -26,8 +26,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/google/codesearch/internal/config"
-	"github.com/google/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/indexer"
 )
 
 var (

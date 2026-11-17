@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/codesearch/internal/config"
-	"github.com/google/codesearch/internal/indexer"
-	"github.com/google/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/lang"
 )
 
 var testFiles = map[string]string{

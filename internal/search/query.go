@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/lang"
 )
 
 // Query is a parsed search query.

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/config"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/config"
 )
 
 func testConfig(t *testing.T, root string, shardFiles int) *config.Config {

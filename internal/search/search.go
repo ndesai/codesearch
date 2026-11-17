@@ -21,9 +21,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/lang"
-	"github.com/google/codesearch/regexp"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/regexp"
 )
 
 // Options limit the work done by a search.

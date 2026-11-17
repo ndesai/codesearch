@@ -16,7 +16,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/google/codesearch/sparse"
+	"github.com/ndesai/codesearch/sparse"
 )
 
 // Index writing.  See read.go for details of on-disk format.

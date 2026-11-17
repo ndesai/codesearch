@@ -31,8 +31,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/config"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/config"
 )
 
 var errLocked = errors.New("another indexer is already running")

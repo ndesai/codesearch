@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/internal/lang"
 )
 
 var (

@@ -18,9 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/config"
-	"github.com/google/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/indexer"
 )
 
 // An Engine searches the indexed repositories of a configuration.

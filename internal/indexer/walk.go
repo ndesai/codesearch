@@ -12,9 +12,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/google/codesearch/index"
-	"github.com/google/codesearch/internal/config"
-	"github.com/google/codesearch/internal/gitignore"
+	"github.com/ndesai/codesearch/index"
+	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/gitignore"
 )
 
 // comparePaths orders slash-separated relative paths the same way the

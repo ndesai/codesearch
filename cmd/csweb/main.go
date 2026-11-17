@@ -29,9 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/codesearch/internal/config"
-	"github.com/google/codesearch/internal/indexer"
-	"github.com/google/codesearch/internal/search"
+	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/search"
 )
 
 var (
