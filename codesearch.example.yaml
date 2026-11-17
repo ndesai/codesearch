@@ -9,7 +9,7 @@
 #
 # Paths may use ~ and $ENV_VARS. Relative paths are relative to this file.
 
-# Where index shards and metadata are stored. Needs roughly 20-30% of the
+# Where index shards and metadata are stored. Needs roughly 10% of the
 # size of the indexed source. Default: ~/.cache/codesearch
 index_dir: ~/.cache/codesearch
 

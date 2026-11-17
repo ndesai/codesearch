@@ -206,7 +206,7 @@ function updateHomeRepos() {
     let stats = r.indexed ? `${fmtNum(r.files)} files · ${fmtBytes(r.bytes)} · updated ${fmtAgo(r.updated)}` : (busy ? 'Indexing…' : 'Not indexed yet');
     return `<a class="repo-card" href="${fileURL(r.name, '')}">
       <div class="name">${busy ? '<span class="spinner"></span>' : `<span class="dot ${r.indexed ? '' : 'off'}"></span>`}${esc(r.name)}</div>
-      <div class="path" title="${esc(r.root)}">${esc(r.root)}</div>
+      <div class="path" title="${esc(r.root)}">&lrm;${esc(r.root)}&lrm;</div>
       <div class="stats">${stats}</div>
       ${r.error ? `<div class="err">${esc(r.error)}</div>` : ''}
     </a>`;
