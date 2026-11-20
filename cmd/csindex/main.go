@@ -7,8 +7,8 @@
 //
 // Usage:
 //
-//	csindex [-config file] [-full] [-v] [repo...]
-//	csindex [-config file] -status
+//	csindex [-config file] [-index_dir dir] [-full] [-v] [repo...]
+//	csindex [-config file] [-index_dir dir] -status
 //
 // The first run indexes every configured repository. Later runs only
 // re-read files whose size or modification time changed, so they are
@@ -31,15 +31,16 @@ import (
 )
 
 var (
-	configFlag  = flag.String("config", "", "configuration `file` (default $CODESEARCH_CONFIG or ~/.config/codesearch/config.yaml)")
-	fullFlag    = flag.Bool("full", false, "rebuild the index from scratch")
-	statusFlag  = flag.Bool("status", false, "print the state of the index and exit")
-	verboseFlag = flag.Bool("v", false, "verbose output")
-	waitFlag    = flag.Bool("wait", true, "wait for a concurrent indexer (such as csweb) to finish")
+	configFlag   = flag.String("config", "", "configuration `file` (default $CODESEARCH_CONFIG or ~/.config/codesearch/config.yaml)")
+	indexDirFlag = flag.String("index_dir", "", "store the index in `dir` (overrides $CODESEARCH_INDEX_DIR and the config file)")
+	fullFlag     = flag.Bool("full", false, "rebuild the index from scratch")
+	statusFlag   = flag.Bool("status", false, "print the state of the index and exit")
+	verboseFlag  = flag.Bool("v", false, "verbose output")
+	waitFlag     = flag.Bool("wait", true, "wait for a concurrent indexer (such as csweb) to finish")
 )
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: csindex [-config file] [-full] [-v] [repo...]\n       csindex [-config file] -status\n")
+	fmt.Fprintf(os.Stderr, "usage: csindex [-config file] [-index_dir dir] [-full] [-v] [repo...]\n       csindex [-config file] [-index_dir dir] -status\n")
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -57,6 +58,11 @@ func main() {
 	cfg, err := config.Load(file)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *indexDirFlag != "" {
+		if err := cfg.SetIndexDir(*indexDirFlag); err != nil {
+			log.Fatalf("-index_dir: %v", err)
+		}
 	}
 
 	if *statusFlag {

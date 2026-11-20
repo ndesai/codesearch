@@ -19,6 +19,7 @@ tools and adds a configurable incremental indexer and a full web app.
   trigram index so that queries over a million files take a fraction of a second.
 - Google Code Search–style queries: `file:`, `lang:`, `repo:`, `sym:`, `case:`,
   `-term`, `OR`, `NOT`, and `( )` grouping; path globs like `file:src/**/*.kt`.
+- Search is case-insensitive by default (`case:yes` for exact case).
 - File and folder name matches, plus suggestions as you type.
 - Results ranked with definitions first, and a sidebar to narrow by repository,
   language and directory.
@@ -31,14 +32,16 @@ tools and adds a configurable incremental indexer and a full web app.
   including Android files such as `Android.bp`, AIDL, HIDL and `.rc`.
 - Click any identifier to see its definitions and references; Ctrl/⌘-click jumps
   straight to the definition.
-- File tree, file outline (classes, functions, methods), find in file, and links
-  to lines or line ranges.
-- Permalinks pinned to the current git commit.
-- In-place preview of HTML files, sandboxed away from the app.
+- File tree, file outline (classes, functions, methods), and find in file.
+- Links to lines and line ranges; copy the path, a link, a permalink pinned to
+  the current git commit, or the raw file URL.
+- In-place preview of HTML files, with their CSS, images and scripts, sandboxed
+  away from the app.
 
 **Git**
 - Blame: who last changed each line, and when.
-- File history that follows renames, with diffs, and any version of a file one click away.
+- File history that follows renames, with diffs (for the file or the whole
+  commit), and any version of a file one click away.
 - Works with nested repositories such as AOSP's `repo` checkouts.
 
 **Indexing**
@@ -50,7 +53,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - The web server keeps the index fresh in the background.
 
 **Everywhere**
-- Light and dark themes, keyboard shortcuts, and a layout that works on phones.
+- Light and dark themes, keyboard shortcuts, and a layout that works on phones,
+  including over a private network such as Tailscale.
 
 ## Screenshots
 
@@ -94,13 +98,18 @@ cd codesearch
 go install ./cmd/...
 ```
 
-Create a configuration file listing the folders to search:
+Create a configuration file listing the folders to search. On Linux it lives
+at `~/.config/codesearch/config.yaml`:
 
 ```sh
 mkdir -p ~/.config/codesearch
-cp codesearch.example.yaml ~/.config/codesearch/config.yaml
+curl -o ~/.config/codesearch/config.yaml https://raw.githubusercontent.com/ndesai/codesearch/master/codesearch.example.yaml
 $EDITOR ~/.config/codesearch/config.yaml
 ```
+
+On macOS the default location is `~/Library/Application Support/codesearch/config.yaml`,
+and on Windows `%AppData%\codesearch\config.yaml`. Anywhere else works too: set
+`$CODESEARCH_CONFIG` or pass `-config file` to the commands.
 
 ```yaml
 index_dir: ~/.cache/codesearch     # where the index is stored
@@ -129,24 +138,78 @@ csindex -status    # what is indexed, and how big
 csindex -full      # rebuild from scratch
 ```
 
-See [`codesearch.example.yaml`](codesearch.example.yaml) for every option:
-exclude patterns, file size limit, shard size, indexing parallelism, and more.
+`csweb` and `csindex` can run at the same time: they take turns using a lock
+in the index directory, and `csweb` picks up index changes within a few seconds.
+
+## Configuration
+
+The configuration is a YAML file; [`codesearch.example.yaml`](codesearch.example.yaml)
+is a commented template. Paths may use `~` and `$ENV_VARS`, and relative paths
+are relative to the configuration file.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `repos` | (required) | The folders to index. Each has a `path`, an optional `name` (default: the folder name, used in `repo:` queries) and optional `exclude` patterns. |
+| `index_dir` | `~/.cache/codesearch` (macOS: `~/Library/Caches/codesearch`, Windows: `%LocalAppData%\codesearch`) | Where the index, saved searches and lock file are stored. Can also be set with `$CODESEARCH_INDEX_DIR` or `-index_dir` (see below). |
+| `listen` | `localhost:2473` | Address for `csweb`. See [Security](#security) before changing it. |
+| `update_interval` | `0` (off) | How often `csweb` re-indexes in the background, e.g. `10m`. |
+| `exclude` | | Patterns skipped in every repository (see below). |
+| `use_default_excludes` | `true` | Skip binaries, images, archives, `node_modules`, minified files and similar. |
+| `use_gitignore` | `true` | Skip files ignored by `.gitignore` files (at any depth) and `.git/info/exclude`. |
+| `include_hidden` | `false` | Index files and folders whose names start with `.`. |
+| `max_file_size` | `2MB` | Larger files are not indexed. |
+| `shard_files` | `25000` | Files per index shard. Smaller shards make incremental updates cheaper. |
+| `parallelism` | half the CPUs, at most 4 | Shards indexed at once. Each indexing worker uses about 400 MB of memory. |
+
+Exclude patterns use shell glob syntax. A pattern without a slash matches a
+file or folder name anywhere (`node_modules`, `*.min.js`); a pattern with a
+slash matches from the repository root (`/out` skips only the top-level `out`
+folder). Changing excludes, `max_file_size`, `include_hidden` or
+`use_gitignore` makes the next update rebuild that repository's index.
+
+### Choosing where the index is stored
+
+The index (the cache directory) can take several gigabytes for large trees, so
+you may want it on a particular disk. Set it in any of these ways; the first
+one found wins:
+
+1. The `-index_dir dir` flag of `csweb` or `csindex`.
+2. The `CODESEARCH_INDEX_DIR` environment variable.
+3. `index_dir:` in the configuration file.
+4. The default: `codesearch` in your user cache directory.
+
+A relative path in the flag or environment variable is relative to the current
+directory; in the configuration file, it is relative to the file. `~` and
+`$VARS` are expanded. If you run `csweb` and `csindex` separately, give them the
+same directory. Moving the index to a new directory makes the first update
+there a full rebuild. To keep your saved searches, copy `saved-searches.json`
+from the old directory to the new one; then the old directory can be deleted.
+
+```sh
+csweb -index_dir /mnt/fast-ssd/codesearch
+CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
+```
 
 ## Search syntax
 
 | Query | Meaning |
 |---|---|
 | `foo bar` | Files containing both `foo` and `bar`. Each term is a regular expression. |
-| `foo OR bar` | Files containing either. |
+| `foo OR bar` | Files containing either (`AND` is implied between terms and may be written out). |
 | `-foo`, `NOT foo` | Exclude files containing `foo`. |
 | `(a OR b) -file:test` | Grouping. `file:` and `lang:` work inside groups too. |
 | `"foo(bar"` | Literal text. Invalid regular expressions are also searched literally. |
-| `file:\.cc$` | Path matches a regular expression (also `f:`, `-file:`). |
+| `file:\.cc$` | Path matches a regular expression (also `f:`, `path:`, `-file:`). |
 | `file:src/**/*.kt` | Path glob: `*` within a folder, `**` across folders, leading `/` anchors at the root. |
 | `lang:java` | Language: `c`, `c++`, `java`, `kotlin`, `go`, `py`, `rust`, `ts`, `bp`, `aidl`, … |
-| `repo:aosp` | Repository name (also `-repo:`). |
+| `repo:aosp` | Repository name, as a regular expression (also `r:`, `-repo:`). |
+| `content:file` | Search contents only, even for a word that looks like a filter (also `c:`). |
 | `sym:Activity` | Definitions of a symbol. |
 | `case:yes` | Case-sensitive. Search is case-insensitive by default; `case:auto` is case-sensitive only for terms with upper-case letters. |
+
+Parentheses group only when the group contains an operator (or a parenthesis
+stands alone), so code like `func (b *Reader)` is searched as written.
+`repo:`, `case:` and `sym:` apply to the whole query.
 
 ## Keyboard shortcuts
 
@@ -163,6 +226,11 @@ exclude patterns, file size limit, shard size, indexing parallelism, and more.
 | `t` | Toggle the sidebar |
 | `Esc` | Close the bottom panel |
 | `?` | Help |
+
+With the mouse: click an identifier for its definitions and references,
+Ctrl/⌘-click to jump to its definition, click a line number to link to it and
+Shift-click another to select a range, and click a commit in the blame column to
+see its diff.
 
 ## How it works
 
@@ -182,19 +250,64 @@ exclude patterns, file size limit, shard size, indexing parallelism, and more.
   with per-language heuristics. This works for every language without building
   the code, at the cost of the occasional misclassified line. It is not
   compiler-accurate like Kythe-based cross references.
+- **Outline** comes from per-language patterns over the file's text, so it
+  needs no build either.
 - **Git integration** runs `git blame`, `git log` and `git show` on demand,
-  with timeouts.
+  with timeouts, in whichever repository contains the file.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a tour of the code.
 
+## Where data is stored
+
+Everything below lives in the index directory (`index_dir`) unless noted.
+
+- `index_dir/repos/<name>/`: each repository's index shards and manifest.
+  Repositories removed from the configuration have their index deleted on the
+  next update.
+- `index_dir/saved-searches.json`: saved searches, shared by every browser that
+  uses the server.
+- Each browser's local storage: recent searches, recently viewed files, and UI
+  preferences such as the theme.
+
+## Using it from other devices
+
+To use ND Code Search from your phone or laptop, run `csweb` with `listen` set
+to an address those devices can reach, ideally a private network such as
+[Tailscale](https://tailscale.com) (for example `listen: 100.x.y.z:2473`, your
+machine's Tailscale address). `listen: 0.0.0.0:2473` also works but exposes the
+server on every network the machine is connected to. Copying links works over
+plain `http://` addresses as well.
+
 ## Security
 
-ND Code Search serves your source code and has no login. Keep `listen` on
-`localhost` (the default), or bind it only to a private network such as your
-Tailscale address. On localhost it rejects requests addressed to other host
-names, which blocks DNS-rebinding attacks from web pages you visit. Raw files
-are always served as plain text, and HTML previews run in a sandbox with no
-access to the app.
+ND Code Search serves your source code and has no login: anyone who can reach
+the server can read every indexed file. Keep `listen` on `localhost` (the
+default), or bind it only to a private network as described above.
+
+- On a localhost address, the server rejects requests addressed to other host
+  names, which blocks DNS-rebinding attacks from web pages you visit. This check
+  is off when listening on other addresses.
+- Requests that change state (saved searches, re-indexing) require a custom
+  header, so other web sites cannot trigger them.
+- Raw files are always served as plain text, and HTML previews run in a sandbox
+  with an opaque origin, so a malicious page in a repository cannot read the app
+  or other files.
+- Only files inside the configured folders can be read; `..` paths and
+  symbolic links that point outside are refused.
+
+## Limitations
+
+- Cross references and the outline are heuristic, not compiler-accurate. Expect
+  the occasional missed definition, or a declaration such as a C++ forward
+  declaration listed as a definition.
+- Search results stop after 2,000 matching files (the page says so); refine the
+  query with `file:`, `lang:` or `repo:` to see the rest.
+- Git blame and history call `git` on demand; on very long histories they can be
+  slow, and they give up after 30 seconds.
+- Files larger than `max_file_size` are not indexed, and files over 20 MB are
+  not displayed.
+- HTML previews cannot use cookies, local storage, or JavaScript modules loaded
+  from the server.
 
 ## Command-line tools
 
@@ -203,6 +316,30 @@ access to the app.
 | `csweb` | The web app (also keeps the index up to date) |
 | `csindex` | Build and incrementally update the index from the config file |
 | `cindex`, `csearch`, `cgrep` | The original single-index command-line tools from google/codesearch |
+
+`csweb [-config file] [-index_dir dir] [-listen addr] [-noindex] [-verbose]`
+- `-index_dir` stores the index in `dir` (see
+  [Choosing where the index is stored](#choosing-where-the-index-is-stored));
+  `-listen` overrides the configuration's address; `-noindex` turns off
+  background indexing (use it when `csindex` runs separately); `-verbose` logs
+  details of each index update.
+
+`csindex [-config file] [-index_dir dir] [-full] [-status] [-v] [-wait=false] [repo...]`
+- With repository names, only those repositories are updated. `-index_dir`
+  works as for `csweb`. `-full` rebuilds
+  from scratch, `-status` prints what is indexed, and `-wait=false` exits instead
+  of waiting if another indexer (such as `csweb`) is running.
+
+## Development
+
+```sh
+go test ./...        # unit tests, including incremental-indexing correctness
+go vet ./...
+```
+
+The web UI is plain HTML, CSS and JavaScript in `cmd/csweb/static`, embedded
+into the `csweb` binary; there is no build step. [ARCHITECTURE.md](ARCHITECTURE.md)
+describes the packages.
 
 ## Credits and license
 

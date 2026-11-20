@@ -40,6 +40,8 @@ var DefaultExcludes = []string{
 // Config is the top-level configuration.
 type Config struct {
 	// IndexDir is where index shards and metadata are stored.
+	// $CODESEARCH_INDEX_DIR, if set, overrides it (see IndexDirEnv),
+	// and commands may override both with SetIndexDir.
 	IndexDir string `yaml:"index_dir"`
 	// Listen is the address csweb listens on.
 	Listen string `yaml:"listen"`
@@ -138,6 +140,36 @@ func ParseSize(s string) (int64, error) {
 	return int64(v * float64(mult)), nil
 }
 
+// IndexDirEnv is the environment variable that overrides index_dir.
+const IndexDirEnv = "CODESEARCH_INDEX_DIR"
+
+// DefaultIndexDir returns the index directory used when none is
+// configured: codesearch in the user's cache directory
+// (~/.cache/codesearch on Linux, ~/Library/Caches/codesearch on macOS,
+// %LocalAppData%\codesearch on Windows).
+func DefaultIndexDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = filepath.Join(home(), ".cache")
+	}
+	return filepath.Join(dir, "codesearch")
+}
+
+// SetIndexDir overrides the index directory, for example from a
+// command-line flag. A relative dir is relative to the current
+// directory; ~ and $VARS are expanded.
+func (c *Config) SetIndexDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return fmt.Errorf("empty index directory")
+	}
+	abs, err := expand(dir)
+	if err != nil {
+		return err
+	}
+	c.IndexDir = abs
+	return nil
+}
+
 // DefaultFile returns the default configuration file path:
 // $CODESEARCH_CONFIG, or else $XDG_CONFIG_HOME/codesearch/config.yaml
 // (~/.config/codesearch/config.yaml).
@@ -208,15 +240,15 @@ func Parse(file string, data []byte) (*Config, error) {
 		return expand(p)
 	}
 
-	if c.IndexDir == "" {
-		dir, err := os.UserCacheDir()
-		if err != nil {
-			dir = filepath.Join(home(), ".cache")
-		}
-		c.IndexDir = filepath.Join(dir, "codesearch")
-	}
 	var err error
-	if c.IndexDir, err = resolve(c.IndexDir); err != nil {
+	if env := os.Getenv(IndexDirEnv); env != "" {
+		// Relative to the current directory, like a command-line flag.
+		if err := c.SetIndexDir(env); err != nil {
+			return nil, errorf("$%s: %v", IndexDirEnv, err)
+		}
+	} else if c.IndexDir == "" {
+		c.IndexDir = DefaultIndexDir()
+	} else if c.IndexDir, err = resolve(c.IndexDir); err != nil {
 		return nil, errorf("index_dir: %v", err)
 	}
 	if c.Listen == "" {

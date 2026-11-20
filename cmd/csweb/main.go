@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	csweb [-config file] [-listen addr] [-noindex]
+//	csweb [-config file] [-index_dir dir] [-listen addr] [-noindex]
 //
 // Csweb reads the configuration (by default ~/.config/codesearch/config.yaml),
 // serves the search UI, and keeps the index up to date in the background
@@ -35,17 +35,18 @@ import (
 )
 
 var (
-	configFlag  = flag.String("config", "", "configuration `file` (default $CODESEARCH_CONFIG or ~/.config/codesearch/config.yaml)")
-	listenFlag  = flag.String("listen", "", "listen `address` (overrides the config file)")
-	noIndexFlag = flag.Bool("noindex", false, "do not update the index in the background")
-	verboseFlag = flag.Bool("verbose", false, "log details of index updates")
+	configFlag   = flag.String("config", "", "configuration `file` (default $CODESEARCH_CONFIG or ~/.config/codesearch/config.yaml)")
+	indexDirFlag = flag.String("index_dir", "", "store the index in `dir` (overrides $CODESEARCH_INDEX_DIR and the config file)")
+	listenFlag   = flag.String("listen", "", "listen `address` (overrides the config file)")
+	noIndexFlag  = flag.Bool("noindex", false, "do not update the index in the background")
+	verboseFlag  = flag.Bool("verbose", false, "log details of index updates")
 )
 
 //go:embed static
 var staticFS embed.FS
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "usage: csweb [-config file] [-listen addr] [-noindex]\n")
+	fmt.Fprintf(os.Stderr, "usage: csweb [-config file] [-index_dir dir] [-listen addr] [-noindex]\n")
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -66,6 +67,11 @@ func main() {
 	cfg, err := config.Load(file)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *indexDirFlag != "" {
+		if err := cfg.SetIndexDir(*indexDirFlag); err != nil {
+			log.Fatalf("-index_dir: %v", err)
+		}
 	}
 	addr := cfg.Listen
 	if *listenFlag != "" {
@@ -137,7 +143,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("serving %d repositories at http://%s/", len(cfg.Repos), displayAddr(ln.Addr().String()))
+	log.Printf("serving %d repositories at http://%s/ (index in %s)", len(cfg.Repos), displayAddr(ln.Addr().String()), cfg.IndexDir)
 	srv := &http.Server{
 		Handler:           secure(addr, mux),
 		ReadHeaderTimeout: 10 * time.Second,

@@ -20,6 +20,7 @@ import (
 
 func testConfig(t *testing.T, root string, shardFiles int) *config.Config {
 	t.Helper()
+	t.Setenv(config.IndexDirEnv, "") // don't let the environment redirect test indexes
 	yaml := fmt.Sprintf("index_dir: %s\nshard_files: %d\nparallelism: 3\nrepos:\n  - path: %s\n    name: test\n    exclude: [skipme, /top_only]\n",
 		filepath.Join(t.TempDir(), "idx"), shardFiles, root)
 	cfg, err := config.Parse(filepath.Join(root, "cfg.yaml"), []byte(yaml))

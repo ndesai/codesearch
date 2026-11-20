@@ -10,7 +10,10 @@
 # Paths may use ~ and $ENV_VARS. Relative paths are relative to this file.
 
 # Where index shards and metadata are stored. Needs roughly 10% of the
-# size of the indexed source. Default: ~/.cache/codesearch
+# size of the indexed source. Default: codesearch in your user cache
+# directory (~/.cache/codesearch on Linux, ~/Library/Caches/codesearch on
+# macOS). The CODESEARCH_INDEX_DIR environment variable and the -index_dir
+# flag of csweb and csindex override this setting.
 index_dir: ~/.cache/codesearch
 
 # Address for csweb. Keep it on localhost unless you want to share

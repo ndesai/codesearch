@@ -88,6 +88,7 @@ class Store {
 
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
+	t.Setenv(config.IndexDirEnv, "") // don't let the environment redirect test indexes
 	root := t.TempDir()
 	for name, content := range testFiles {
 		p := filepath.Join(root, filepath.FromSlash(name))

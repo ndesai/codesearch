@@ -5,6 +5,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,5 +101,46 @@ func TestParseSize(t *testing.T) {
 	}
 	if _, err := ParseSize("big"); err == nil || !strings.Contains(err.Error(), "bad size") {
 		t.Errorf("ParseSize(big) err = %v", err)
+	}
+}
+
+func TestIndexDirOverrides(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "conf", "c.yaml")
+	parse := func(yaml string) *Config {
+		t.Helper()
+		cfg, err := Parse(file, []byte(yaml+"\nrepos: [{path: /src}]\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+
+	// Default: the user's cache directory.
+	t.Setenv(IndexDirEnv, "")
+	if got := parse("").IndexDir; got != DefaultIndexDir() {
+		t.Errorf("default index dir = %s, want %s", got, DefaultIndexDir())
+	}
+	// Config file: relative to the config file.
+	if got := parse("index_dir: idx").IndexDir; got != filepath.Join(dir, "conf", "idx") {
+		t.Errorf("config index dir = %s", got)
+	}
+	// Environment beats the config file and is relative to the current directory.
+	t.Setenv(IndexDirEnv, "envidx")
+	cwd, _ := os.Getwd()
+	cfg := parse("index_dir: idx")
+	if cfg.IndexDir != filepath.Join(cwd, "envidx") {
+		t.Errorf("env index dir = %s", cfg.IndexDir)
+	}
+	// A flag (SetIndexDir) beats both; ~ is expanded.
+	if err := cfg.SetIndexDir("~/flagidx"); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := os.UserHomeDir()
+	if cfg.IndexDir != filepath.Join(h, "flagidx") {
+		t.Errorf("flag index dir = %s", cfg.IndexDir)
+	}
+	if err := cfg.SetIndexDir(" "); err == nil {
+		t.Error("empty index dir accepted")
 	}
 }
