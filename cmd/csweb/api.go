@@ -131,7 +131,7 @@ func (s *server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		if q.Expr == nil && len(q.Repos) == 0 && len(q.NotRepos) == 0 {
+		if q.Expr == nil && len(q.Repos) == 0 && len(q.NotRepos) == 0 && len(q.SymFilters) == 0 {
 			writeError(w, http.StatusBadRequest, errors.New("query has nothing to search for"))
 			return
 		}

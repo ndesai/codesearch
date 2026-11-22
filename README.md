@@ -207,13 +207,16 @@ CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
 | `repo:aosp` | Repository name, as a regular expression (also `r:`, `-repo:`). |
 | `content:file` | Search contents only, even for a word that looks like a filter (also `c:`). |
 | `sym:Activity` | Definitions of a symbol. |
+| `class:.*Impl$` | Type definitions (class, struct, interface, enum, …) whose names match a regular expression. `function:` (or `func:`) lists functions and methods, `symbol:` any kind. Qualified names work too: `function:Reader.Read`, `func:Rect::intersect`. Combine with `file:`, `lang:` and `repo:`, or with each other using `OR`. |
 | `usage:foo` | `foo` outside comments and string literals (also `code:`). |
 | `comment:foo`, `string:foo` | `foo` only inside comments, or only inside string literals. |
 | `case:yes` | Case-sensitive. Search is case-insensitive by default; `case:auto` is case-sensitive only for terms with upper-case letters. |
 
 Parentheses group only when the group contains an operator (or a parenthesis
 stands alone), so code like `func (b *Reader)` is searched as written.
-`repo:`, `case:` and `sym:` apply to the whole query.
+`repo:`, `case:` and `sym:` apply to the whole query. `class:`, `function:` and
+`symbol:` list definitions from the symbol index, so they can't be mixed with
+text search terms.
 
 ## Keyboard shortcuts
 

@@ -110,6 +110,9 @@ const maxLineLen = 1000
 // Search runs the query over every matching repository.
 func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 	opt.defaults()
+	if len(q.SymFilters) > 0 {
+		return e.symbolSearch(ctx, q, opt)
+	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, opt.Timeout)
 	defer cancel()

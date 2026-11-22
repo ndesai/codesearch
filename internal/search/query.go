@@ -32,6 +32,9 @@ import (
 //	                case:auto is case-sensitive only for terms with an
 //	                upper-case letter)
 //	sym:Foo         definitions of the symbol Foo
+//	class:.*Impl$   definitions of types whose names match a regexp; also
+//	                function: (or func:) and symbol: (any kind), and
+//	                qualified names like Reader.Read or Rect::intersect
 //	usage:foo       foo outside comments and string literals (also code:);
 //	                comment:foo and string:foo match only inside them
 //
@@ -57,6 +60,9 @@ type Query struct {
 	NotRepos []*stdregexp.Regexp
 	Case     string // "yes", "auto", or "" or "no" (case-insensitive)
 	Symbol   string // sym: query
+	// SymFilters are class:, function: and symbol: filters. A query with
+	// them lists matching definitions instead of searching text.
+	SymFilters []*SymFilter
 	// Simple reports whether Expr is a conjunction without OR or NOT.
 	Simple bool
 
@@ -270,6 +276,9 @@ func ParseQuery(s string) (*Query, error) {
 	q.Expr = expr
 	q.Simple = true
 	q.walk(expr, true, true)
+	if len(q.SymFilters) > 0 && (len(q.AllTerms) > 0 || q.Symbol != "") {
+		return nil, fmt.Errorf("class:, function: and symbol: list definitions and can't be combined with text search terms; narrow them with file:, lang: or repo:")
+	}
 	return q, nil
 }
 
@@ -414,29 +423,45 @@ func (p *parser) peek() *item {
 }
 
 func (p *parser) parseOr() (*Node, error) {
-	left, err := p.parseAnd()
+	// side parses one operand of OR. Symbol filters (class: and so on)
+	// yield no node but are a valid operand: they are alternatives.
+	side := func() (n *Node, sym bool, err error) {
+		before := len(p.q.SymFilters)
+		n, err = p.parseAnd()
+		return n, n == nil && len(p.q.SymFilters) > before, err
+	}
+	left, leftSym, err := side()
 	if err != nil {
 		return nil, err
 	}
 	var kids []*Node
+	ored := false
 	for it := p.peek(); it != nil && it.op == "OR"; it = p.peek() {
 		p.pos++
-		right, err := p.parseAnd()
+		right, rightSym, err := side()
 		if err != nil {
 			return nil, err
 		}
-		if left == nil || right == nil {
+		if left == nil && !leftSym || right == nil && !rightSym {
 			return nil, fmt.Errorf("OR needs search terms on both sides")
 		}
-		if kids == nil {
-			kids = []*Node{left}
+		if !ored && left != nil {
+			kids = append(kids, left)
 		}
-		kids = append(kids, right)
+		ored = true
+		if right != nil {
+			kids = append(kids, right)
+		}
 	}
-	if kids != nil {
-		return &Node{Op: OpOr, Kids: kids}, nil
+	switch {
+	case !ored:
+		return left, nil
+	case len(kids) == 0:
+		return nil, nil
+	case len(kids) == 1:
+		return kids[0], nil
 	}
-	return left, nil
+	return &Node{Op: OpOr, Kids: kids}, nil
 }
 
 func (p *parser) parseAnd() (*Node, error) {
@@ -553,7 +578,7 @@ func (p *parser) atom(t token) (*Node, error) {
 		return nil, nil
 	case "case":
 		return nil, nil // handled in ParseQuery
-	case "sym", "symbol", "def":
+	case "sym", "def":
 		if !identRE.MatchString(val) {
 			return nil, fmt.Errorf("sym: requires an identifier")
 		}
@@ -565,6 +590,16 @@ func (p *parser) atom(t token) (*Node, error) {
 			return nil, err
 		}
 		return wrap(q.leaf(term))
+	case "class", "function", "func", "symbol":
+		if neg {
+			return nil, fmt.Errorf("-%s: is not supported", key)
+		}
+		f, err := newSymFilter(key, val, q.Case)
+		if err != nil {
+			return nil, err
+		}
+		q.SymFilters = append(q.SymFilters, f)
+		return nil, nil
 	case "usage", "code", "comment", "string", "str":
 		term, err := newTerm(val, t.quoted, q.Case)
 		if err != nil {
@@ -669,8 +704,8 @@ func newTerm(text string, quoted bool, mode string) (*Term, error) {
 
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
-	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "symbol", "def", "content", "c",
-		"usage", "code", "comment", "string", "str":
+	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "def", "content", "c",
+		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol":
 		return true
 	}
 	return false

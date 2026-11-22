@@ -47,6 +47,7 @@
     <tr><td><code>lang:java</code></td><td>Language: <code>c</code>, <code>c++</code>, <code>java</code>, <code>kotlin</code>, <code>go</code>, <code>py</code>, <code>rust</code>, <code>ts</code>, <code>bp</code>, <code>aidl</code>, … (also <code>-lang:</code>).</td></tr>
     <tr><td><code>repo:aosp</code></td><td>Repository name (also <code>r:</code>, <code>-repo:</code>).</td></tr>
     <tr><td><code>sym:Activity</code></td><td>Definitions of a symbol.</td></tr>
+    <tr><td><code>class:.*Impl$</code></td><td>Types whose names match a regular expression; <code>function:</code> for functions and methods, <code>symbol:</code> for any kind. Qualified names work: <code>func:Rect::intersect</code>.</td></tr>
     <tr><td><code>usage:foo</code></td><td>Only outside comments and strings. <code>comment:foo</code> and <code>string:foo</code> match only inside them.</td></tr>
     <tr><td><code>case:yes</code></td><td>Case-sensitive. Search is case-insensitive by default; <code>case:auto</code> makes terms with upper-case letters case-sensitive.</td></tr>
   </table>

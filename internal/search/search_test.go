@@ -464,6 +464,51 @@ func TestRegionFilters(t *testing.T) {
 	}
 }
 
+func TestSymbolFilters(t *testing.T) {
+	e := newTestEngine(t)
+	tests := []struct {
+		query string
+		want  string // path:line ...
+	}{
+		{"class:Rect", "native/libs/ui/Rect.h:4"},
+		{"class:Rect lang:c++", "native/libs/ui/Rect.h:4"}, // lang:c++ includes headers
+		{"class:Rect lang:java", ""},
+		{"class:Canvas OR class:Rect", "native/libs/gfx/Canvas.h:3 native/libs/ui/Rect.h:4"},
+		{"class:.*Thread", "core/java/android/app/ActivityThread.java:3"},
+		{"function:intersect", "native/libs/ui/Rect.cpp:5 native/libs/ui/Rect.h:6"},
+		{"func:Rect::intersect", "native/libs/ui/Rect.cpp:5 native/libs/ui/Rect.h:6"},
+		{"func:Canvas::intersect", ""},
+		{"function:on.* file:Activity.java", "core/java/android/app/Activity.java:10"},
+		{"function:Activity.onCreate", "core/java/android/app/Activity.java:10"},
+		{"function:newmodule", "tools/build.go:7"},
+		{"function:New.*", "tools/build.go:7"},
+		{"function:newmodule case:yes", ""},
+		{"symbol:Module", "tools/build.go:3"},
+		{"class:Module", "tools/build.go:3"},
+		{"function:Module", ""},
+		{"symbol:Store repo:aosp", "web/app.ts:3"},
+	}
+	for _, tt := range tests {
+		r := search(t, e, tt.query)
+		var got []string
+		for _, f := range r.Files {
+			for _, l := range f.Lines {
+				got = append(got, fmt.Sprintf("%s:%d", f.Path, l.Line))
+			}
+		}
+		slices.Sort(got)
+		if g := strings.Join(got, " "); g != tt.want {
+			t.Errorf("%q:\n got %s\nwant %s", tt.query, g, tt.want)
+		}
+	}
+	if _, err := ParseQuery("class:Foo bar"); err == nil {
+		t.Error("class: combined with a text term was accepted")
+	}
+	if _, err := ParseQuery("-class:Foo"); err == nil {
+		t.Error("-class: accepted")
+	}
+}
+
 func TestFileGlobs(t *testing.T) {
 	tests := []struct {
 		glob string
