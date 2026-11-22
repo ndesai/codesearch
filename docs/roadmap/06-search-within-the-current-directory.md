@@ -12,3 +12,11 @@ When browsing a deep directory such as `frameworks/base/core/java/android/app`, 
 ## Acceptance criteria
 - From `/f/go/net/http/server.go`, searching `.ServeMux` returns matches under `net/http/` only.
 - The added filters are visible and editable in the search box.
+
+## Status: done
+
+- In a file or folder view, a query starting with `.` followed by a word
+  character, space or quote (so not `.*foo`) is limited to the current folder by
+  adding `repo:^<repo>$ file:^<folder>/` to the visible query.
+- The suggestion dropdown offers "Search in <folder>/" first, and a
+  **Search here** button next to the breadcrumbs pre-fills the filters.

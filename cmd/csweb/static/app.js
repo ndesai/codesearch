@@ -226,6 +226,7 @@ function attachSearchBox(form, input) {
     list.innerHTML = items.map((f, i) => {
       if (f.hdr) return `<li class="hdr">${esc(f.hdr)}</li>`;
       if (f.q) return `<li data-i="${i}" class="qitem${i === sel ? ' sel' : ''}">${f.saved ? '<span class="star">★</span>' : icons.history}<span class="qtext">${esc(f.name || f.q)}</span>${f.name && f.name !== f.q ? `<span class="dir">${esc(f.q)}</span>` : ''}</li>`;
+      if (f.scope) return `<li class="searchall scope${i === sel ? ' sel' : ''}" data-i="${i}">${icons.dir} Search in <b>${esc(f.label)}</b></li>`;
       if (f.all) return `<li class="searchall${i === sel ? ' sel' : ''}" data-i="${i}">${icons.search.replace('<svg', '<svg style="width:16px;height:16px;fill:currentColor;vertical-align:-3px"')} Search for <b>${esc(input.value)}</b></li>`;
       const j = f.path.lastIndexOf('/');
       return `<li data-i="${i}" class="${i === sel ? 'sel' : ''}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}<span class="base">${esc(f.path.slice(j + 1))}${f.dir ? '/' : ''}</span><span class="dir">${esc(f.path.slice(0, j + 1))}&lrm;</span></li>`;
@@ -235,15 +236,20 @@ function attachSearchBox(form, input) {
   const choose = i => {
     const f = items[i];
     list.hidden = true;
+    if (f && f.scope) { input.value = scopedQuery(input.value.trim().replace(/^\.\s*/, '')); submit(); return; }
     if (f && f.q) { input.value = f.q; submit(); return; }
     if (!f || f.all) { submit(); return; }
     input.blur();
     navigate(fileURL(f.repo, f.path));
   };
   const submit = () => {
-    const q = input.value.trim();
+    let q = input.value.trim();
     list.hidden = true;
     if (!q) return;
+    // A leading "." searches the folder being viewed (".ServeMux"), unless
+    // it starts a regular expression such as ".*foo".
+    if (/^\.(?=[\w\s"'$-])/.test(q) && currentScope()) q = scopedQuery(q.slice(1).trim());
+    input.value = q;
     input.blur();
     navigate(searchURL(q));
   };
@@ -275,6 +281,8 @@ function attachSearchBox(form, input) {
         if (input.value.trim() !== q || document.activeElement !== input) return;
         items = (r.files || []);
         if (items.length) items.push({all: true});
+        const sc = currentScope();
+        if (sc && !/^(repo|r):/.test(q)) items.unshift({scope: true, label: (sc.dir ? sc.dir + '/' : sc.repo)});
         sel = -1;
         render();
       } catch (e) { if (!isAbort(e)) console.warn(e); }
@@ -496,7 +504,8 @@ async function renderFile(repo, path, q, rev, at) {
   if (r.kind === 'file' && !rev) recent.add('f', {repo, path});
   wrap.scrollTop = 0;
   if (r.kind === 'dir') {
-    head.innerHTML = crumbsHTML(repo, path) + `<span class="finfo">${fmtNum(r.entries.length)} items</span>`;
+    head.innerHTML = crumbsHTML(repo, path) + searchHereButton() + `<span class="finfo">${fmtNum(r.entries.length)} items</span>`;
+    head.onclick = e => { if (e.target.closest('[data-act="searchhere"]')) searchHere(); };
     treeCache.set(repo + '\0' + path, Promise.resolve(r.entries));
     const up = path ? `<tr><td colspan="2"><a href="${fileURL(repo, path.split('/').slice(0, -1).join('/'))}">${icons.dir}..</a></td></tr>` : '';
     const rows = r.entries.map(e => `<tr class="${e.excluded ? 'excluded' : ''}"><td><a href="${fileURL(repo, (path ? path + '/' : '') + e.name)}">${e.dir ? icons.dir : icons.file}${esc(e.name)}</a></td><td class="size">${e.dir ? '' : fmtBytes(e.size)}</td></tr>`).join('');
@@ -509,7 +518,7 @@ async function renderFile(repo, path, q, rev, at) {
 
   const nlines = r.lines ? r.lines.length : 0;
   const canPreview = isHTMLFile(path) && !rev && r.lines;
-  head.innerHTML = crumbsHTML(repo, path) +
+  head.innerHTML = crumbsHTML(repo, path) + searchHereButton() +
     (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>
       <a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
@@ -540,6 +549,7 @@ async function renderFile(repo, path, q, rev, at) {
     if (b.dataset.act === 'blame') toggleBlame();
     if (b.dataset.act === 'history') showHistory();
     if (b.dataset.act === 'preview') togglePreview();
+    if (b.dataset.act === 'searchhere') searchHere();
   };
 
   if (r.tooLarge) wrap.innerHTML = `<div class="notice">This file is too large to display (${fmtBytes(r.size)}). <a href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank">View raw</a></div>`;
@@ -553,6 +563,39 @@ async function renderFile(repo, path, q, rev, at) {
   renderOutline(r.outline);
   onHash(true);
   restorePanel();
+}
+
+// ---- searching the current folder ----
+
+// currentScope returns the repository and folder being viewed, if any.
+function currentScope() {
+  if (!view || view.kind !== 'file') return null;
+  const isDir = view.data && view.data.kind === 'dir';
+  const dir = isDir ? view.path : view.path.split('/').slice(0, -1).join('/');
+  return {repo: view.repo, dir};
+}
+
+const reEscape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// scopedQuery adds filters limiting q to the folder being viewed.
+function scopedQuery(q) {
+  const sc = currentScope();
+  if (!sc) return q;
+  const quote = v => /[\s"]/.test(v) ? '"' + v.replace(/["\\]/g, '\\$&') + '"' : v;
+  let f = 'repo:' + quote('^' + reEscape(sc.repo) + '$');
+  if (sc.dir) f += ' file:' + quote('^' + reEscape(sc.dir) + '/');
+  return (f + ' ' + q).trim();
+}
+
+function searchHereButton() {
+  const sc = currentScope() || {};
+  return `<button class="tbtn" data-act="searchhere" title="Search in ${esc(sc.dir ? sc.dir + '/' : 'this repository')} (or start a query with .)">${icons.search.replace('<svg', '<svg class="tico"')}Search here</button>`;
+}
+
+function searchHere() {
+  qbox.value = scopedQuery('') + ' ';
+  qbox.focus();
+  qbox.setSelectionRange(qbox.value.length, qbox.value.length);
 }
 
 // ---- HTML preview ----

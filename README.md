@@ -23,6 +23,7 @@ tools and adds a configurable incremental indexer and a full web app.
   `is:test`, `is:generated` and `is:vendored` to include or exclude those files.
 - Search is case-insensitive by default (`case:yes` for exact case).
 - File and folder name matches, plus suggestions as you type.
+- Search within the folder you are browsing.
 - Results ranked with definitions first (using a symbol index built while
   indexing), and a sidebar to narrow by repository, language and directory, or
   hide tests, generated and third-party code.
@@ -208,6 +209,7 @@ CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
 | `lang:java` | Language: `c`, `c++`, `java`, `kotlin`, `go`, `py`, `rust`, `ts`, `bp`, `aidl`, … |
 | `repo:aosp` | Repository name, as a regular expression (also `r:`, `-repo:`). |
 | `content:file` | Search contents only, even for a word that looks like a filter (also `c:`). |
+| `.foo` | While browsing a file or folder: search for `foo` in that folder. Adds `repo:` and `file:` filters you can see and edit. The **Search here** button does the same. |
 | `sym:Activity` | Definitions of a symbol. |
 | `class:.*Impl$` | Type definitions (class, struct, interface, enum, …) whose names match a regular expression. `function:` (or `func:`) lists functions and methods, `symbol:` any kind. Qualified names work too: `function:Reader.Read`, `func:Rect::intersect`. Combine with `file:`, `lang:` and `repo:`, or with each other using `OR`. |
 | `is:test` | Test files; also `is:generated` (by path, or a "Code generated … DO NOT EDIT" / `@generated` marker) and `is:vendored` (`third_party/`, `external/`, `vendor/`, `node_modules/`, …). `-is:test` excludes them. |
