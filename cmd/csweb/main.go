@@ -130,6 +130,7 @@ func main() {
 	mux.HandleFunc("/api/refs", s.handleRefs)
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/saved", s.handleSaved)
+	s.registerAPIv1(mux)
 	mux.HandleFunc("/raw/", s.handleRaw)
 	mux.HandleFunc("/preview/", s.handlePreview)
 	index, err := fs.ReadFile(static, "index.html")

@@ -65,6 +65,11 @@ tools and adds a configurable incremental indexer and a full web app.
   binaries and build output are skipped by default.
 - The web server keeps the index fresh in the background.
 
+**For tools and AI agents**
+- A documented JSON API (`/api/v1/...`) and an MCP server (`csmcp`) that let
+  scripts and AI coding agents search and read your indexed code. See
+  [docs/api.md](docs/api.md).
+
 **Everywhere**
 - Light and dark themes, keyboard shortcuts, and a layout that works on phones,
   including over a private network such as Tailscale.
@@ -168,6 +173,7 @@ are relative to the configuration file.
 | `update_interval` | `0` (off) | How often `csweb` re-indexes in the background, e.g. `10m`. |
 | `exclude` | | Patterns skipped in every repository (see below). |
 | `use_default_excludes` | `true` | Skip binaries, images, archives, `node_modules`, minified files and similar. |
+| `api_token` | | If set, the `/api/v1` JSON API and `csmcp -http` require `Authorization: Bearer <token>`. |
 | `monitor_webhook` | | URL that receives a JSON `POST` (`search`, `query`, `text`, `matches`) when a monitored search has new matches; works with Slack incoming webhooks, ntfy and the like. |
 | `rank_recent` | `true` | Rank recently modified files slightly higher (the boost halves every 30 days). |
 | `use_gitignore` | `true` | Skip files ignored by `.gitignore` files (at any depth) and `.git/info/exclude`. |
@@ -352,6 +358,7 @@ default), or bind it only to a private network as described above.
 |---|---|
 | `csweb` | The web app (also keeps the index up to date) |
 | `csindex` | Build and incrementally update the index from the config file |
+| `csmcp` | MCP server for AI agents, over stdio or HTTP ([docs/api.md](docs/api.md)) |
 | `cindex`, `csearch`, `cgrep` | The original single-index command-line tools from google/codesearch |
 
 `csweb [-config file] [-index_dir dir] [-listen addr] [-noindex] [-verbose]`

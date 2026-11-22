@@ -263,6 +263,10 @@ func TestXref(t *testing.T) {
 	if got := strings.Join(defs, " "); got != "core/java/android/app/Activity.java:3 core/java/android/app/Activity.java:7" {
 		t.Errorf("Activity defs: %s", got)
 	}
+	// References are nearest first: the viewed file before others.
+	if len(r.Refs) == 0 || r.Refs[0].Path != "core/java/android/app/ActivityThread.java" {
+		t.Errorf("first reference file: %+v", r.Refs[0].Path)
+	}
 	if r.NumFiles != 3 { // Activity.java, ActivityThread.java, other.go
 		t.Errorf("Activity numFiles = %d", r.NumFiles)
 	}

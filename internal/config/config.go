@@ -63,6 +63,9 @@ type Config struct {
 	UseDefaultExcludes *bool `yaml:"use_default_excludes"`
 	// IncludeHidden indexes files and directories whose names begin with ".".
 	IncludeHidden bool `yaml:"include_hidden"`
+	// APIToken, if set, is required (as "Authorization: Bearer <token>")
+	// by the /api/v1 JSON API and by csmcp's HTTP transport.
+	APIToken string `yaml:"api_token"`
 	// MonitorWebhook, if set, receives a JSON POST when a monitored saved
 	// search has new matches.
 	MonitorWebhook string `yaml:"monitor_webhook"`

@@ -350,9 +350,21 @@ func (e *Engine) Xref(ctx context.Context, sym, repo, from string) (*XrefResult,
 		}
 		fm.Lines = refs
 		if len(refs) > 0 {
+			fm.Score = -float64(cands[i].dist)
 			res.Refs = append(res.Refs, fm)
 		}
 	}
+	// Nearest first. (Candidates were reordered to put files with known
+	// definitions first; that must not affect the order of references.)
+	slices.SortStableFunc(res.Refs, func(a, b *FileMatch) int {
+		switch {
+		case a.Score > b.Score:
+			return -1
+		case a.Score < b.Score:
+			return 1
+		}
+		return 0
+	})
 	slices.SortStableFunc(res.Defs, func(a, b *Location) int { return a.rank - b.rank })
 	if len(res.Defs) > 100 {
 		res.Defs = res.Defs[:100]
