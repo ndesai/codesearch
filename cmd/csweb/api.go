@@ -234,6 +234,34 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("file not found"))
 		return
 	}
+	if rev != "" {
+		// Another revision: the path may be a directory there.
+		if top, grel, err := gitFile(r.Context(), abs); err == nil && objectType(r.Context(), top, rev, grel) == "tree" {
+			ents, err := lsTree(r.Context(), top, rev, grel)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			slices.SortFunc(ents, func(a, b dirEntry) int {
+				if a.Dir != b.Dir {
+					if a.Dir {
+						return -1
+					}
+					return 1
+				}
+				return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+			})
+			writeJSON(w, map[string]any{"kind": "dir", "repo": repo.Name, "path": rel, "entries": ents, "rev": rev, "git": true})
+			return
+		}
+	}
+	if rev != "" && err == nil && info.IsDir() {
+		// A folder outside any git repository (such as a folder holding
+		// several repositories) has no revisions: show it as it is.
+		if _, _, gerr := gitFile(r.Context(), abs); gerr != nil {
+			rev = ""
+		}
+	}
 	if rev == "" && info.IsDir() {
 		ents, err := os.ReadDir(abs)
 		if err != nil {
@@ -275,6 +303,9 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 		})
 		resp := map[string]any{"kind": "dir", "repo": repo.Name, "path": rel, "entries": out}
+		if _, _, err := gitFile(r.Context(), abs); err == nil {
+			resp["git"] = true
+		}
 		if r.FormValue("readme") != "" {
 			for _, e := range out {
 				if !e.Dir && strings.HasPrefix(strings.ToLower(e.Name), "readme") && e.Size < 256<<10 {

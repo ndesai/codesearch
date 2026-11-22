@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -38,9 +39,18 @@ const gitTimeout = 30 * time.Second
 // gitFile locates abs within its git work tree, returning the work
 // tree root and the file's slash-separated path relative to it.
 func gitFile(ctx context.Context, abs string) (top, rel string, err error) {
+	// Start from the nearest existing directory: when browsing another
+	// revision, the path may not exist in the work tree.
 	dir := abs
-	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-		dir = filepath.Dir(abs)
+	for {
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", "", errNotInGit
+		}
+		dir = parent
 	}
 	out, err := runGit(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -55,6 +65,9 @@ func gitFile(ctx context.Context, abs string) (top, rel string, err error) {
 	r, err := filepath.Rel(realTop, realAbs)
 	if err != nil || strings.HasPrefix(r, "..") {
 		return "", "", errNotInGit
+	}
+	if r == "." {
+		r = "" // the work tree's root
 	}
 	return top, filepath.ToSlash(r), nil
 }
@@ -111,10 +124,105 @@ func (s *server) fileArgs(w http.ResponseWriter, r *http.Request) (top, rel stri
 // revArg returns the validated rev parameter ("" for the work tree).
 func revArg(r *http.Request) (string, error) {
 	rev := r.FormValue("rev")
-	if rev != "" && !hashRE.MatchString(rev) {
+	if rev != "" && !validRev(rev) {
 		return "", errors.New("invalid revision")
 	}
 	return rev, nil
+}
+
+// revRE accepts commit hashes, branch and tag names, and expressions
+// like HEAD~3 or main^. Revisions never start with "-" (so git can't
+// take them for options) and never contain "..", ":" or spaces.
+var revRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/~^+@-]*$`)
+
+func validRev(rev string) bool {
+	return len(rev) <= 200 && revRE.MatchString(rev) && !strings.Contains(rev, "..") && !strings.HasSuffix(rev, ".lock")
+}
+
+// objectType returns "blob", "tree" or "commit" (a submodule) for the
+// path at rev, or "" if it doesn't exist there.
+func objectType(ctx context.Context, top, rev, rel string) string {
+	spec := rev + ":" + rel
+	out, err := runGit(ctx, top, "cat-file", "-t", spec)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// lsTree lists the directory rel at rev.
+func lsTree(ctx context.Context, top, rev, rel string) ([]dirEntry, error) {
+	args := []string{"ls-tree", "-z", "-l", rev}
+	if rel != "" {
+		args = append(args, "--", rel+"/")
+	}
+	out, err := runGit(ctx, top, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ents []dirEntry
+	for _, rec := range strings.Split(string(out), "\x00") {
+		meta, name, ok := strings.Cut(rec, "\t")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(meta) // mode type object size
+		if len(f) < 4 {
+			continue
+		}
+		de := dirEntry{Name: path.Base(name), Dir: f[1] == "tree" || f[1] == "commit"}
+		if !de.Dir {
+			de.Size, _ = strconv.ParseInt(f[3], 10, 64)
+		}
+		ents = append(ents, de)
+	}
+	return ents, nil
+}
+
+type gitRef struct {
+	Name string `json:"name"`
+	Hash string `json:"hash"`
+	Time int64  `json:"time"`
+}
+
+// handleRefs lists the branches and tags of the git repository that
+// contains the given file or directory.
+func (s *server) handleRefs(w http.ResponseWriter, r *http.Request) {
+	top, _, ok := s.fileArgs(w, r)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"branches": []gitRef{}, "tags": []gitRef{}}
+	if out, err := runGit(r.Context(), top, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		resp["current"] = strings.TrimSpace(string(out)) // "HEAD" when detached
+	}
+	if out, err := runGit(r.Context(), top, "rev-parse", "HEAD"); err == nil {
+		resp["head"] = strings.TrimSpace(string(out))
+	}
+	for _, kind := range []string{"branches", "tags"} {
+		ref := "refs/heads"
+		if kind == "tags" {
+			ref = "refs/tags"
+		}
+		out, err := runGit(r.Context(), top, "for-each-ref", "--sort=-creatordate", "--count=300",
+			"--format=%(refname:short)%09%(objectname)%09%(creatordate:unix)", ref)
+		if err != nil {
+			continue
+		}
+		var refs []gitRef
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			f := strings.Split(l, "\t")
+			if len(f) != 3 {
+				continue
+			}
+			t, _ := strconv.ParseInt(f[2], 10, 64)
+			refs = append(refs, gitRef{f[0], f[1], t})
+		}
+		if refs != nil {
+			resp[kind] = refs
+		}
+	}
+	writeJSON(w, resp)
 }
 
 type blameCommit struct {
@@ -345,9 +453,17 @@ func readAtRev(ctx context.Context, abs, rev, at string) ([]byte, error) {
 	}
 	out, err := runGit(ctx, top, "show", fmt.Sprintf("%s:%s", rev, rel))
 	if err != nil {
-		return nil, fmt.Errorf("file not found at %s", rev[:min(len(rev), 12)])
+		return nil, fmt.Errorf("file not found at %s", shortRev(rev))
 	}
 	return out, nil
+}
+
+// shortRev abbreviates commit hashes for messages.
+func shortRev(rev string) string {
+	if hashRE.MatchString(rev) {
+		return rev[:min(len(rev), 12)]
+	}
+	return rev
 }
 
 func htmlEscape(s string) string {

@@ -12,7 +12,7 @@ Each file describes the problem, the proposal and the acceptance criteria.
 - [x] [7. Recency-aware ranking](07-recency-aware-ranking.md)
 - [x] [8. Multi-line search (pcre:yes)](08-multi-line-search-pcre-yes.md)
 - [x] [9. Call hierarchy (who calls this, what does this call)](09-call-hierarchy-who-calls-this-what-does-this-call.md)
-- [ ] [10. Browse other branches, tags and commits](10-browse-other-branches-tags-and-commits.md)
+- [x] [10. Browse other branches, tags and commits](10-browse-other-branches-tags-and-commits.md)
 - [ ] [11. Search commit messages and diffs](11-search-commit-messages-and-diffs.md)
 - [ ] [12. Code monitors: alerts when new code matches a saved search](12-code-monitors-alerts-when-new-code-matches-a-saved-search.md)
 - [ ] [13. Documented JSON API and MCP server for AI agents](13-documented-json-api-and-mcp-server-for-ai-agents.md)

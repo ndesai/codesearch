@@ -49,6 +49,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - Blame: who last changed each line, and when.
 - File history that follows renames, with diffs (for the file or the whole
   commit), and any version of a file one click away.
+- Browse any branch, tag or commit: the file tree, folders and files follow the
+  selected revision while you navigate (search always covers the working tree).
 - Works with nested repositories such as AOSP's `repo` checkouts.
 
 **Indexing**

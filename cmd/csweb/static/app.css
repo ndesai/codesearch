@@ -457,3 +457,15 @@ li.unresolved .cname { color: var(--text-2); }
 .ckids { padding-left: 22px; }
 .csites { margin: 2px 0 4px; border: 1px solid var(--border-soft); border-radius: 6px; }
 .cload, .cnone { padding: 6px 10px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+
+/* ---- revisions ---- */
+.revbtn { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; }
+.revbtn .revname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+.revmenu { min-width: 300px; max-height: 60vh; overflow: auto; padding-top: 0; }
+.revmenu input { margin: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-alt); color: var(--text); font: 13px var(--mono); outline: none; }
+.revmenu input:focus { border-color: var(--accent); background: var(--bg); }
+.revlist { display: flex; flex-direction: column; }
+.revlist button { display: flex; justify-content: space-between; gap: 16px; font-family: var(--mono); }
+.revlist button.cur { background: var(--bg-sel); color: var(--chip-text); }
+.revhdr { font: 500 11px var(--sans); color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; padding: 8px 16px 2px; }
+.revnone { padding: 6px 16px; font-size: 12.5px; }

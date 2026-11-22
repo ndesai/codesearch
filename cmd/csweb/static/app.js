@@ -71,6 +71,7 @@ const icons = {
   copy: '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11z"/></svg>',
   link: '<svg viewBox="0 0 24 24"><path d="M3.9 12a3.1 3.1 0 0 1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12zM8 13h8v-2H8v2zm9-6h-4v1.9h4a3.1 3.1 0 0 1 0 6.2h-4V17h4a5 5 0 0 0 0-10z"/></svg>',
   history: '<svg class="ico" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.9 3.9.1.1L9 12H6a7 7 0 1 1 2.1 5l-1.4 1.4A9 9 0 1 0 13 3zm-1 5v5l4.3 2.5.7-1.2-3.5-2.1V8z"/></svg>',
+  branch: '<svg class="tico" viewBox="0 0 24 24"><path d="M6 3a3 3 0 0 0-1 5.83v6.34A3 3 0 1 0 7 15.17V13a2 2 0 0 1 2-2h6a4 4 0 0 0 4-4V8.83a3 3 0 1 0-2 0V7a2 2 0 0 1-2 2H9a4 4 0 0 0-2 .54V8.83A3 3 0 0 0 6 3zm0 2a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm12 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2zM6 17a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>',
   popout: '<svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>',
   tree: '<svg viewBox="0 0 24 24"><path d="M3 3h8v2H3zm4 4h8v2H7zm0 4h8v2H7zm-4 4h8v2H3zm4 4h8v2H7z"/></svg>',
   search: '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 9.5 16a6.5 6.5 0 0 0 4.2-1.6l.3.3v.8l5 5 1.5-1.5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>',
@@ -462,15 +463,16 @@ const treeCache = new Map(); // "repo\0path" -> entries
 let treeHidden = (() => { try { return localStorage.getItem('cs-tree') === 'hidden'; } catch (e) { return false; } })();
 
 async function listDir(repo, path) {
-  const key = repo + '\0' + path;
-  if (!treeCache.has(key)) treeCache.set(key, api('file', {repo, path}).then(r => r.entries || []));
+  const rev = treeRev;
+  const key = repo + '\0' + rev + '\0' + path;
+  if (!treeCache.has(key)) treeCache.set(key, api('file', rev ? {repo, path, rev} : {repo, path}).then(r => r.entries || []));
   try { return await treeCache.get(key); } catch (e) { treeCache.delete(key); throw e; }
 }
 
 async function renderFile(repo, path, q, rev, at) {
   // Reuse the layout (and tree) when moving within the same repo.
   let fv = $('.fv', app);
-  const sameRepo = view && view.kind === 'file' && view.repo === repo && fv;
+  const sameRepo = view && view.kind === 'file' && view.repo === repo && (view.rev || '') === (rev || '') && fv;
   const prev = view;
   view = {kind: 'file', repo, path, q, rev, at, panel: prev && prev.kind === 'file' ? prev.panel : null};
   const v = view;
@@ -504,11 +506,15 @@ async function renderFile(repo, path, q, rev, at) {
   if (r.kind === 'file' && !rev) recent.add('f', {repo, path});
   wrap.scrollTop = 0;
   if (r.kind === 'dir') {
-    head.innerHTML = crumbsHTML(repo, path) + searchHereButton() + `<span class="finfo">${fmtNum(r.entries.length)} items</span>`;
-    head.onclick = e => { if (e.target.closest('[data-act="searchhere"]')) searchHere(); };
-    treeCache.set(repo + '\0' + path, Promise.resolve(r.entries));
-    const up = path ? `<tr><td colspan="2"><a href="${fileURL(repo, path.split('/').slice(0, -1).join('/'))}">${icons.dir}..</a></td></tr>` : '';
-    const rows = r.entries.map(e => `<tr class="${e.excluded ? 'excluded' : ''}"><td><a href="${fileURL(repo, (path ? path + '/' : '') + e.name)}">${e.dir ? icons.dir : icons.file}${esc(e.name)}</a></td><td class="size">${e.dir ? '' : fmtBytes(e.size)}</td></tr>`).join('');
+    head.innerHTML = crumbsHTML(repo, path) + searchHereButton() + `<span class="finfo">${fmtNum(r.entries.length)} items</span>` +
+      revBanner(repo, path, rev) + (r.git ? revSelector(rev) : '');
+    head.onclick = e => {
+      if (e.target.closest('[data-act="searchhere"]')) searchHere();
+      if (e.target.closest('[data-act="rev"]')) { e.stopPropagation(); toggleRevMenu(); }
+    };
+    treeCache.set(repo + '\0' + (rev || '') + '\0' + path, Promise.resolve(r.entries));
+    const up = path ? `<tr><td colspan="2"><a href="${navURL(repo, path.split('/').slice(0, -1).join('/'))}">${icons.dir}..</a></td></tr>` : '';
+    const rows = r.entries.map(e => `<tr class="${e.excluded ? 'excluded' : ''}"><td><a href="${navURL(repo, (path ? path + '/' : '') + e.name)}">${e.dir ? icons.dir : icons.file}${esc(e.name)}</a></td><td class="size">${e.dir ? '' : fmtBytes(e.size)}</td></tr>`).join('');
     const readme = r.readme ? `<div class="readme"><h3>${esc(r.readme.name)}</h3>${codeHTML(r.readme.lines)}</div>` : '';
     wrap.innerHTML = `<div class="dirlist"><table>${up}${rows}</table></div>${readme}`;
     renderOutline(null);
@@ -522,9 +528,10 @@ async function renderFile(repo, path, q, rev, at) {
     (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>
       <a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
-    (rev ? `<span class="revbanner">Version <code>${esc(rev.slice(0, 10))}</code> · <a href="${fileURL(repo, path)}">Current version</a></span>` : '') +
+    revBanner(repo, path, rev) +
     `<span class="findnav" hidden></span>` +
     `<span class="factions">
+      ${r.git ? revSelector(rev) : ''}
       ${r.git ? `<button class="tbtn" data-act="blame" title="Show who last changed each line (b)">Blame</button>
       <button class="tbtn" data-act="history" title="Show the file's history (h)">History</button>` : ''}
       <button class="iconbtn" data-act="tree" title="Toggle sidebar (t)">${icons.tree}</button>
@@ -550,6 +557,7 @@ async function renderFile(repo, path, q, rev, at) {
     if (b.dataset.act === 'history') showHistory();
     if (b.dataset.act === 'preview') togglePreview();
     if (b.dataset.act === 'searchhere') searchHere();
+    if (b.dataset.act === 'rev') { e.stopPropagation(); toggleRevMenu(); }
   };
 
   if (r.tooLarge) wrap.innerHTML = `<div class="notice">This file is too large to display (${fmtBytes(r.size)}). <a href="/raw/${encodeURIComponent(repo)}/${encPath(path)}" target="_blank">View raw</a></div>`;
@@ -563,6 +571,62 @@ async function renderFile(repo, path, q, rev, at) {
   renderOutline(r.outline);
   onHash(true);
   restorePanel();
+}
+
+// ---- browsing other revisions ----
+
+const isHash = s => /^[0-9a-f]{7,64}$/.test(s);
+
+function revBanner(repo, path, rev) {
+  if (!rev) return '';
+  return `<span class="revbanner" title="Files and folders are shown as of ${esc(rev)}; search results show the working tree.">` +
+    `${isHash(rev) ? 'Commit' : 'At'} <code>${esc(isHash(rev) ? rev.slice(0, 10) : rev)}</code> · <a href="${fileURL(repo, path)}">Working tree</a></span>`;
+}
+
+function revSelector(rev) {
+  const label = rev ? (isHash(rev) ? rev.slice(0, 10) : rev) : 'Working tree';
+  return `<span class="menuwrap"><button class="tbtn revbtn" data-act="rev" title="Browse another branch, tag or commit">${icons.branch}<span class="revname">${esc(label)}</span> ▾</button>
+    <span class="menu revmenu" hidden><input type="text" placeholder="Branch, tag or commit" spellcheck="false" aria-label="Revision"><span class="revlist"><span class="muted">Loading…</span></span></span></span>`;
+}
+
+const refsCache = new Map();
+
+async function toggleRevMenu() {
+  const m = $('.fhead .revmenu', app);
+  if (!m) return;
+  const open = m.hidden;
+  closeMenus();
+  if (!open) return;
+  m.hidden = false;
+  const v = view, input = $('input', m), list = $('.revlist', m);
+  input.focus();
+  const key = v.repo + '\0' + v.path.split('/').slice(0, -1).join('/');
+  if (!refsCache.has(key)) refsCache.set(key, api('refs', {repo: v.repo, path: v.path}).catch(e => ({error: e.message})));
+  const refs = await refsCache.get(key);
+  if (view !== v) return;
+  if (refs.error) { list.innerHTML = `<span class="error">${esc(refs.error)}</span>`; return; }
+  const go = rev => { closeMenus(); navigate(rev ? fileURL(v.repo, v.path, {rev}) : fileURL(v.repo, v.path)); };
+  const render = () => {
+    const f = input.value.trim().toLowerCase();
+    const item = (name, sub, rev) => `<button data-rev="${esc(rev)}"${(v.rev || '') === rev ? ' class="cur"' : ''}><span>${esc(name)}</span><span class="muted">${esc(sub)}</span></button>`;
+    const pick = list => list.filter(x => !f || x.name.toLowerCase().includes(f)).slice(0, 50);
+    let html = item('Working tree', refs.current && refs.current !== 'HEAD' ? refs.current : 'current checkout', '');
+    const br = pick(refs.branches), tg = pick(refs.tags);
+    if (br.length) html += '<span class="revhdr">Branches</span>' + br.map(b => item(b.name, b.time ? fmtDate(b.time) : '', b.name)).join('');
+    if (tg.length) html += '<span class="revhdr">Tags</span>' + tg.map(t => item(t.name, t.time ? fmtDate(t.time) : '', t.name)).join('');
+    if (f && !br.length && !tg.length) html += `<span class="muted revnone">Press Enter to open “${esc(input.value.trim())}”</span>`;
+    list.innerHTML = html;
+  };
+  render();
+  input.oninput = render;
+  input.onkeydown = e => {
+    if (e.key === 'Enter') {
+      const first = $('button[data-rev]:not([data-rev=""])', list);
+      const typed = input.value.trim();
+      go(typed && !refs.branches.concat(refs.tags).some(x => x.name === typed) && /^[\w][\w.\/~^+@-]*$/.test(typed) ? typed : first ? first.dataset.rev : typed);
+    } else if (e.key === 'Escape') closeMenus();
+  };
+  list.onclick = e => { const b = e.target.closest('[data-rev]'); if (b) go(b.dataset.rev); };
 }
 
 // ---- searching the current folder ----
@@ -636,13 +700,18 @@ function codeHTML(lines, clickable) {
   return out + '</div>';
 }
 
+// navURL links to a file or folder at the revision being browsed.
+function navURL(repo, path, opts = {}) {
+  return fileURL(repo, path, {...opts, rev: (view && view.kind === 'file' && view.repo === repo && view.rev) || undefined});
+}
+
 function crumbsHTML(repo, path) {
-  let out = `<div class="crumbs"><span class="repo-chip">${esc(repo)}</span><a href="${fileURL(repo, '')}">${esc(repo)}</a>`;
+  let out = `<div class="crumbs"><span class="repo-chip">${esc(repo)}</span><a href="${navURL(repo, '')}">${esc(repo)}</a>`;
   if (path) {
     const parts = path.split('/');
     parts.forEach((p, i) => {
       const sub = parts.slice(0, i + 1).join('/');
-      out += '<span class="sep">/</span>' + (i === parts.length - 1 ? `<span class="last">${esc(p)}</span>` : `<a href="${fileURL(repo, sub)}">${esc(p)}</a>`);
+      out += '<span class="sep">/</span>' + (i === parts.length - 1 ? `<span class="last">${esc(p)}</span>` : `<a href="${navURL(repo, sub)}">${esc(p)}</a>`);
     });
   }
   return out + '</div>';
@@ -658,9 +727,12 @@ function toggleTree() {
 
 // ---- file tree ----
 
+let treeRev = ''; // revision the file tree shows ('' for the work tree)
+
 async function buildTree(repo) {
+  treeRev = view.rev || '';
   const nav = $('.tree', app);
-  nav.innerHTML = `<ul><li class="open" data-path=""><a class="node rootnode" href="${fileURL(repo, '')}" data-dir="1"><span class="tw">${icons.chevron}</span>${icons.dir}<span>${esc(repo)}</span></a><ul></ul></li></ul>`;
+  nav.innerHTML = `<ul><li class="open" data-path=""><a class="node rootnode" href="${navURL(repo, '')}" data-dir="1"><span class="tw">${icons.chevron}</span>${icons.dir}<span>${esc(repo)}</span></a><ul></ul></li></ul>`;
   nav.onclick = async e => {
     const a = e.target.closest('a.node');
     if (!a || !a.dataset.dir) return;
@@ -695,8 +767,8 @@ async function loadChildren(repo, li) {
       const p = (path ? path + '/' : '') + e.name;
       const pad = `style="padding-left:${8 + (depth + 1) * 14}px"`;
       return e.dir
-        ? `<li data-path="${esc(p)}"><a class="node${e.excluded ? ' excluded' : ''}" ${pad} href="${fileURL(repo, p)}" data-dir="1"><span class="tw">${icons.chevron}</span>${icons.dir}<span>${esc(e.name)}</span></a><ul></ul></li>`
-        : `<li data-path="${esc(p)}"><a class="node${e.excluded ? ' excluded' : ''}" ${pad} href="${fileURL(repo, p)}"><span class="tw"></span>${icons.file}<span>${esc(e.name)}</span></a></li>`;
+        ? `<li data-path="${esc(p)}"><a class="node${e.excluded ? ' excluded' : ''}" ${pad} href="${navURL(repo, p)}" data-dir="1"><span class="tw">${icons.chevron}</span>${icons.dir}<span>${esc(e.name)}</span></a><ul></ul></li>`
+        : `<li data-path="${esc(p)}"><a class="node${e.excluded ? ' excluded' : ''}" ${pad} href="${navURL(repo, p)}"><span class="tw"></span>${icons.file}<span>${esc(e.name)}</span></a></li>`;
     }).join('');
   }
   return ul;
