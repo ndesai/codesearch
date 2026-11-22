@@ -3,7 +3,7 @@
 Features found while researching other code search tools, implemented one at a time.
 Each file describes the problem, the proposal and the acceptance criteria.
 
-- [ ] [1. Symbol index built at index time (ctags-style) for ranking, sym: and cross references](01-symbol-index-built-at-index-time-ctags-style-for-ranking-sym.md)
+- [x] [1. Symbol index built at index time (ctags-style) for ranking, sym: and cross references](01-symbol-index-built-at-index-time-ctags-style-for-ranking-sym.md)
 - [ ] [2. Hover cards with the definition and doc comment of an identifier](02-hover-cards-with-the-definition-and-doc-comment-of-an-identi.md)
 - [ ] [3. usage:, comment: and string: search filters](03-usage-comment-and-string-search-filters.md)
 - [ ] [4. Typed symbol filters: class:, function: and symbol: with regular expressions](04-typed-symbol-filters-class-function-and-symbol-with-regular-.md)

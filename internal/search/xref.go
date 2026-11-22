@@ -65,6 +65,7 @@ type defPattern struct {
 // A defMatcher recognizes definition lines for one identifier.
 type defMatcher struct {
 	pats []defPattern
+	fwd  *stdregexp.Regexp // C-family forward declarations, which are not definitions
 }
 
 var (
@@ -93,7 +94,9 @@ var notDeclRE = stdregexp.MustCompile(`^\s*(?:` + notDeclWords + `)\b`)
 
 func newDefMatcher(sym string) *defMatcher {
 	S := stdregexp.QuoteMeta(sym)
-	d := &defMatcher{}
+	d := &defMatcher{
+		fwd: stdregexp.MustCompile(`^\s*(?:template\s*<[^>]*>\s*)?(?:friend\s+)?(?:@class|class|struct|union|enum(?:\s+class)?)\s+(?:[A-Z_]+_EXPORT\s+)?` + S + `\s*;`),
+	}
 	add := func(pat string, langs map[string]bool) {
 		d.pats = append(d.pats, defPattern{re: stdregexp.MustCompile(pat), langs: langs})
 	}
@@ -161,6 +164,11 @@ func (d *defMatcher) isDef(langName, line string) bool {
 		return false
 	}
 	if strings.HasPrefix(t, "#") && !defineRE.MatchString(t) {
+		return false
+	}
+	if cLike[langName] && (d.fwd.MatchString(line) || t[0] == ':' || t[0] == ',') {
+		// Forward declarations, and constructor initializer lists
+		// such as ": Base(x)", are not definitions.
 		return false
 	}
 	stmt := notDeclRE.MatchString(t)
@@ -256,6 +264,22 @@ func (e *Engine) Xref(ctx context.Context, sym, repo, from string) (*XrefResult,
 		}
 	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].dist < cands[j].dist })
+
+	// Definitions from the symbol tables. Files holding them are
+	// searched first, so they survive the candidate limit below.
+	tableDefs := map[string]map[int]bool{}
+	for _, d := range symbolDefs(snaps, sym) {
+		key := d.Repo + "\x00" + d.Path
+		if tableDefs[key] == nil {
+			tableDefs[key] = map[int]bool{}
+		}
+		tableDefs[key][d.Line] = true
+	}
+	if len(tableDefs) > 0 {
+		sort.SliceStable(cands, func(i, j int) bool {
+			return tableDefs[cands[i].repo.Name+"\x00"+cands[i].rel] != nil && tableDefs[cands[j].repo.Name+"\x00"+cands[j].rel] == nil
+		})
+	}
 	const maxFiles = 4000
 	res := &XrefResult{Symbol: sym}
 	if len(cands) > maxFiles {
@@ -284,6 +308,7 @@ func (e *Engine) Xref(ctx context.Context, sym, repo, from string) (*XrefResult,
 				}
 				l := lang.Detect(c.rel).Name
 				fm := &FileMatch{Repo: c.repo.Name, Path: c.rel, Lang: l}
+				fileDefs := tableDefs[c.repo.Name+"\x00"+c.rel]
 				lineno, pos := 1, 0
 				eachLine(re, data, func(lo, hi int) bool {
 					lineno += strings.Count(string(data[pos:lo]), "\n")
@@ -292,7 +317,7 @@ func (e *Engine) Xref(ctx context.Context, sym, repo, from string) (*XrefResult,
 					line := data[lo:hi]
 					if len(fm.Lines) < 200 {
 						lm := LineMatch{Line: lineno}
-						lm.Def = defs.isDef(l, string(line))
+						lm.Def = fileDefs[lineno] || defs.isDef(l, string(line))
 						lm.Text, lm.Ranges = snippet(line, q.Terms)
 						fm.Lines = append(fm.Lines, lm)
 					}

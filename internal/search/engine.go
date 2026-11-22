@@ -21,6 +21,7 @@ import (
 	"github.com/ndesai/codesearch/index"
 	"github.com/ndesai/codesearch/internal/config"
 	"github.com/ndesai/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/symbols"
 )
 
 // An Engine searches the indexed repositories of a configuration.
@@ -57,7 +58,8 @@ type snapshot struct {
 type shard struct {
 	file   string
 	ix     *index.Index
-	prefix int // length of root + separator, stripped from names
+	syms   *symbols.Table // nil if the shard has no symbol table
+	prefix int            // length of root + separator, stripped from names
 
 	namesOnce sync.Once
 	names     *nameTable
@@ -135,7 +137,11 @@ func (r *Repo) refresh(cfg *config.Config) {
 			r.setErr(err)
 			return
 		}
-		snap.shards = append(snap.shards, &shard{file: s.File, ix: ix, prefix: len(m.Root) + 1})
+		sh := &shard{file: s.File, ix: ix, prefix: len(m.Root) + 1}
+		if t, err := symbols.Open(filepath.Join(dir, indexer.SymbolFile(s.File))); err == nil {
+			sh.syms = t
+		}
+		snap.shards = append(snap.shards, sh)
 	}
 
 	r.mu.Lock()
@@ -177,6 +183,7 @@ func (s *snapshot) release() {
 func (s *snapshot) close() {
 	for _, sh := range s.shards {
 		sh.ix.Close()
+		sh.syms.Close()
 	}
 }
 
@@ -279,4 +286,26 @@ func (t *nameTable) name(i int) string {
 // idAt returns the index of the name containing byte offset off.
 func (t *nameTable) idAt(off int) int {
 	return sort.Search(len(t.offs), func(i int) bool { return int(t.offs[i]) > off }) - 1
+}
+
+// A SymbolDef is a definition found in a symbol table.
+type SymbolDef struct {
+	Repo  string
+	Path  string
+	Line  int
+	Kind  string
+	Depth int
+}
+
+// symbolDefs returns the definitions of name in the given snapshots.
+func symbolDefs(snaps []*snapshot, name string) []SymbolDef {
+	var out []SymbolDef
+	for _, s := range snaps {
+		for _, sh := range s.shards {
+			for _, e := range sh.syms.Lookup(name) {
+				out = append(out, SymbolDef{Repo: s.repo.Name, Path: e.Path, Line: e.Line, Kind: e.Kind, Depth: e.Depth})
+			}
+		}
+	}
+	return out
 }

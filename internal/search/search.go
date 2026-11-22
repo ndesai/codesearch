@@ -146,11 +146,25 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 		wg        sync.WaitGroup
 	)
 	sym := q.Symbol
+	// Definitions known to the symbol tables mark matching lines as
+	// definitions (for sym: queries and for ranking identifier searches).
+	var tableDefs map[string]map[int]bool
+	if name := defSymbol(q); name != "" {
+		tableDefs = map[string]map[int]bool{}
+		for _, d := range symbolDefs(snaps, name) {
+			key := d.Repo + "\x00" + d.Path
+			if tableDefs[key] == nil {
+				tableDefs[key] = map[int]bool{}
+			}
+			tableDefs[key][d.Line] = true
+		}
+	}
 	for range min(len(jobs), runtime.GOMAXPROCS(0)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			s := newScanner(q)
+			s.tableDefs = tableDefs
 			for {
 				i := int(next.Add(1) - 1)
 				if i >= len(jobs) || ctx.Err() != nil {
@@ -251,6 +265,21 @@ type scanner struct {
 	terms []*regexp.Regexp // compiled q.AllTerms
 	iq    *index.Query     // nil if there are no content terms
 	defs  *defMatcher
+	// tableDefs maps repo + "\x00" + path to the lines that the
+	// symbol tables say define the searched identifier.
+	tableDefs map[string]map[int]bool
+}
+
+// defSymbol returns the identifier whose definitions a query looks
+// for: the sym: symbol, or a single identifier search term.
+func defSymbol(q *Query) string {
+	if q.Symbol != "" {
+		return q.Symbol
+	}
+	if len(q.Terms) == 1 && q.Terms[0].IsIdent() {
+		return q.Terms[0].Text
+	}
+	return ""
 }
 
 func newScanner(q *Query) *scanner {
@@ -267,10 +296,8 @@ func newScanner(q *Query) *scanner {
 	if len(q.AllTerms) > 0 {
 		s.iq = q.IndexQuery(syn)
 	}
-	if q.Symbol != "" {
-		s.defs = defsFor(q.Symbol)
-	} else if len(q.Terms) == 1 && q.Terms[0].IsIdent() {
-		s.defs = defsFor(q.Terms[0].Text)
+	if name := defSymbol(q); name != "" {
+		s.defs = defsFor(name)
 	}
 	return s
 }
@@ -444,7 +471,7 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 		line := data[h.lo:h.hi]
 		lm := LineMatch{Line: lineno}
 		if s.defs != nil {
-			lm.Def = s.defs.isDef(l.Name, string(line))
+			lm.Def = s.tableDefs[r.Name+"\x00"+rel][lineno] || s.defs.isDef(l.Name, string(line))
 		}
 		if sym != "" && !lm.Def {
 			continue

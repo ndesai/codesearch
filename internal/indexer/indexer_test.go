@@ -16,6 +16,7 @@ import (
 
 	"github.com/ndesai/codesearch/index"
 	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/symbols"
 )
 
 func testConfig(t *testing.T, root string, shardFiles int) *config.Config {
@@ -58,7 +59,7 @@ func update(t *testing.T, cfg *config.Config, full bool) *Result {
 
 // contents returns, for every shard, the file names and for each
 // sampled trigram the matching file names: a canonical view of the index.
-func contents(t *testing.T, cfg *config.Config) (names []string, posts map[string][]string) {
+func contents(t *testing.T, cfg *config.Config) (names []string, posts map[string][]string, syms []string) {
 	t.Helper()
 	m, err := ReadManifest(ManifestFile(cfg, "test"))
 	if err != nil || m == nil {
@@ -85,6 +86,16 @@ func contents(t *testing.T, cfg *config.Config) (names []string, posts map[strin
 			}
 		}
 		ix.Close()
+		tab, err := symbols.Open(filepath.Join(RepoDir(cfg, "test"), SymbolFile(filepath.Base(f))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sf := range tab.Files() {
+			for _, sym := range sf.Symbols {
+				syms = append(syms, fmt.Sprintf("%s:%s:%d:%s", sf.Path, sym.Name, sym.Line, sym.Kind))
+			}
+		}
+		tab.Close()
 	}
 	return
 }
@@ -93,7 +104,7 @@ func TestIncremental(t *testing.T) {
 	root := t.TempDir()
 	words := []string{"foo", "bar", "baz", "abc"}
 	for i := range 40 {
-		write(t, root, fmt.Sprintf("d%d/f%02d.go", i%4, i), fmt.Sprintf("package x // %s %d\n", words[i%4], i))
+		write(t, root, fmt.Sprintf("d%d/f%02d.go", i%4, i), fmt.Sprintf("package x // %s %d\n\nfunc F%d() {}\n", words[i%4], i, i))
 	}
 	write(t, root, "skipme/a.go", "foo\n")
 	write(t, root, "top_only/a.go", "foo\n")
@@ -111,7 +122,10 @@ func TestIncremental(t *testing.T) {
 	if !r.Full || r.Shards != 5 || r.Files != 43 {
 		t.Fatalf("first update: %v", r)
 	}
-	names, _ := contents(t, cfg)
+	names, _, syms := contents(t, cfg)
+	if !slices.Contains(syms, "d0/f00.go:F0:3:func") || len(syms) != 40 {
+		t.Fatalf("symbols after first update: %d %v", len(syms), syms[:min(3, len(syms))])
+	}
 	if len(names) != 42 { // binary file not indexed
 		t.Fatalf("indexed %d names, want 42", len(names))
 	}
@@ -133,12 +147,17 @@ func TestIncremental(t *testing.T) {
 
 	check := func(what string) {
 		t.Helper()
-		gotNames, gotPosts := contents(t, cfg)
+		gotNames, gotPosts, gotSyms := contents(t, cfg)
 		// Rebuild from scratch in a second index dir and compare.
 		cfg2 := *cfg
 		cfg2.IndexDir = filepath.Join(t.TempDir(), "idx2")
 		update(t, &cfg2, true)
-		wantNames, wantPosts := contents(t, &cfg2)
+		wantNames, wantPosts, wantSyms := contents(t, &cfg2)
+		slices.Sort(gotSyms)
+		slices.Sort(wantSyms)
+		if !slices.Equal(gotSyms, wantSyms) {
+			t.Fatalf("%s: symbols differ:\nincremental: %v\nfull:        %v", what, gotSyms, wantSyms)
+		}
 		if !slices.Equal(gotNames, wantNames) {
 			t.Fatalf("%s: names differ:\nincremental: %v\nfull:        %v", what, gotNames, wantNames)
 		}
@@ -155,7 +174,7 @@ func TestIncremental(t *testing.T) {
 	}
 
 	// Modify, add, and delete a few files.
-	write(t, root, "d0/f00.go", "package x // new zzz\n")
+	write(t, root, "d0/f00.go", "package x // new zzz\n\nfunc Renamed() {}\n")
 	write(t, root, "d2/added.go", "package x // new\n")
 	write(t, root, "d0/aa_first.go", "package x // zzz\n") // before every existing path
 	os.Remove(filepath.Join(root, "d3/f07.go"))
@@ -192,7 +211,7 @@ func TestIncremental(t *testing.T) {
 	if !r.Full {
 		t.Fatalf("expected full rebuild after config change: %v", r)
 	}
-	names, _ = contents(t, cfg)
+	names, _, _ = contents(t, cfg)
 	for _, n := range names {
 		if strings.Contains(n, "/d2/") {
 			t.Fatalf("excluded file still indexed: %s", n)
@@ -208,7 +227,7 @@ func TestIncremental(t *testing.T) {
 	if r.Files != 0 {
 		t.Fatalf("empty repo: %v", r)
 	}
-	names, _ = contents(t, cfg)
+	names, _, _ = contents(t, cfg)
 	if len(names) != 0 {
 		t.Fatalf("empty repo still has names %v", names)
 	}

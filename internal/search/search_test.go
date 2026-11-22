@@ -61,6 +61,13 @@ struct Rect {
     bool intersect(const Rect& with, Rect* result) const;
 };
 `,
+	"native/libs/gfx/Canvas.h": `#pragma once
+class Rect;
+class Canvas {
+  friend class Rect;
+  Rect* bounds;
+};
+`,
 	"tools/build.go": `package build
 
 type Module struct {
@@ -258,6 +265,38 @@ func TestXref(t *testing.T) {
 	}
 }
 
+func TestSymbolTables(t *testing.T) {
+	e := newTestEngine(t)
+	snaps := e.acquire(&Query{})
+	defer func() {
+		for _, s := range snaps {
+			s.release()
+		}
+	}()
+	var got []string
+	for _, d := range symbolDefs(snaps, "intersect") {
+		got = append(got, fmt.Sprintf("%s:%d:%s", d.Path, d.Line, d.Kind))
+	}
+	slices.Sort(got)
+	if strings.Join(got, " ") != "native/libs/ui/Rect.cpp:5:method native/libs/ui/Rect.h:6:method" {
+		t.Errorf("symbol table defs of intersect: %v", got)
+	}
+	// Forward declarations are not definitions, in the table or the heuristics.
+	got = nil
+	for _, d := range symbolDefs(snaps, "Rect") {
+		got = append(got, fmt.Sprintf("%s:%d", d.Path, d.Line))
+	}
+	if strings.Join(got, " ") != "native/libs/ui/Rect.h:4" {
+		t.Errorf("symbol table defs of Rect: %v", got)
+	}
+	r, _ := e.Xref(context.Background(), "Rect", "aosp", "native/libs/gfx/Canvas.h")
+	for _, d := range r.Defs {
+		if d.Path == "native/libs/gfx/Canvas.h" {
+			t.Errorf("forward declaration reported as a definition: %s:%d %s", d.Path, d.Line, d.Text)
+		}
+	}
+}
+
 func TestIsDef(t *testing.T) {
 	tests := []struct {
 		lang, sym, line string
@@ -284,6 +323,13 @@ func TestIsDef(t *testing.T) {
 		{"C++", "Foo", "    explicit Foo(int x);", true},
 		{"C++", "Foo", "    Foo(x);", false},
 		{"C++", "Foo", "enum class Foo : uint8_t {", true},
+		{"C++", "Foo", "class Foo;", false},
+		{"C++", "Foo", "  friend class Foo;", false},
+		{"C++", "Foo", "class CONTENT_EXPORT Foo;", false},
+		{"C/C++ Header", "Foo", "struct Foo;", false},
+		{"Rust", "Foo", "pub struct Foo;", true},
+		{"C++", "Base", "    : Base(site_instance,", false},
+		{"C++", "y_", "      , y_(0) {}", false},
 		{"C++", "mCount", "    int mCount = 0;", true},
 		{"C++", "mCount", "    mCount = 0;", false},
 		{"C++", "Rect", "bool Rect::intersect(const Rect& with) const {", false},

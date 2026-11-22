@@ -21,8 +21,8 @@ tools and adds a configurable incremental indexer and a full web app.
   `-term`, `OR`, `NOT`, and `( )` grouping; path globs like `file:src/**/*.kt`.
 - Search is case-insensitive by default (`case:yes` for exact case).
 - File and folder name matches, plus suggestions as you type.
-- Results ranked with definitions first, and a sidebar to narrow by repository,
-  language and directory.
+- Results ranked with definitions first (using a symbol index built while
+  indexing), and a sidebar to narrow by repository, language and directory.
 - Expand any result in place to see the lines around each match.
 - Saved searches (shared across your devices) and per-browser history of
   searches and recently viewed files.
@@ -245,9 +245,14 @@ see its diff.
   modification time; an update walks the tree in parallel (metadata only),
   re-reads only changed files, and merges a small delta index into each
   affected shard.
+- **Symbol index.** While indexing, each file's definitions (types, functions,
+  methods, build modules, ...) are extracted with per-language patterns and
+  stored per shard in a name-sorted table, which `sym:` queries and cross
+  references look up directly.
 - **Search-based cross references.** Clicking an identifier searches the index
-  for the whole word and classifies each hit as a definition or a reference
-  with per-language heuristics. This works for every language without building
+  for the whole word; each hit is a definition if the symbol index lists it or
+  per-language heuristics recognize it (for fields, constants and the like),
+  and a reference otherwise. This works for every language without building
   the code, at the cost of the occasional misclassified line. It is not
   compiler-accurate like Kythe-based cross references.
 - **Outline** comes from per-language patterns over the file's text, so it
@@ -261,7 +266,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a tour of the code.
 
 Everything below lives in the index directory (`index_dir`) unless noted.
 
-- `index_dir/repos/<name>/`: each repository's index shards and manifest.
+- `index_dir/repos/<name>/`: each repository's index shards (`.idx`), symbol
+  tables (`.sym`) and manifest.
   Repositories removed from the configuration have their index deleted on the
   next update.
 - `index_dir/saved-searches.json`: saved searches, shared by every browser that

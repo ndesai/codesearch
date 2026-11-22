@@ -328,7 +328,8 @@ func (c *Config) Repo(name string) *Repo {
 // affect which files are indexed for r change.
 func (c *Config) Fingerprint(r *Repo) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "v1\x00%s\x00%d\x00%v\x00%v\x00", r.Path, c.MaxFileSize, c.IncludeHidden, c.Gitignore())
+	// v2: shards have symbol tables.
+	fmt.Fprintf(h, "v2\x00%s\x00%d\x00%v\x00%v\x00", r.Path, c.MaxFileSize, c.IncludeHidden, c.Gitignore())
 	for _, p := range r.Excludes.patterns {
 		fmt.Fprintf(h, "%s\x00", p)
 	}

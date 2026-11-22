@@ -24,6 +24,7 @@ type Symbol struct {
 const maxSymbols = 5000
 
 type rule struct {
+	need []string // the line must contain one of these to be worth matching
 	re   *regexp.Regexp
 	kind string // "" means use the captured keyword
 	name int    // capture group with the name
@@ -33,32 +34,46 @@ type rule struct {
 
 var mods = `(?:(?:export|default|public|private|protected|internal|abstract|final|sealed|static|data|open|inner|inline|value|enum|annotation|partial|readonly|declare|async|unsafe|extern|virtual|override|suspend|tailrec|operator|infix|external|actual|expect|const|pub(?:\([^)]*\))?)\s+)*`
 
-func r(pat, kind string, name, kw, recv int) rule {
-	return rule{regexp.MustCompile(pat), kind, name, kw, recv}
+func r(pat, kind string, name, kw, recv int, need ...string) rule {
+	return rule{need, regexp.MustCompile(pat), kind, name, kw, recv}
+}
+
+// worth reports whether line could match the rule, a cheap test that
+// avoids running regular expressions on most lines.
+func (ru *rule) worth(line string) bool {
+	if len(ru.need) == 0 {
+		return true
+	}
+	for _, n := range ru.need {
+		if strings.Contains(line, n) {
+			return true
+		}
+	}
+	return false
 }
 
 var (
 	// class Foo, struct Foo, interface Foo, enum class Foo, message Foo, ...
-	typeRule = r(`^\s*`+mods+`(class|struct|interface|enum|trait|protocol|object|record|union|message|service|module|namespace|impl|extension|actor|defmodule|mixin|typealias)\s+(?:class\s+|struct\s+)?(?:\[\[[^\]]*\]\]\s*|[A-Z_]+_EXPORT\s+)?([A-Za-z_$][\w$.:]*)`, "", 2, 1, 0)
+	typeRule = r(`^\s*`+mods+`(class|struct|interface|enum|trait|protocol|object|record|union|message|service|module|namespace|impl|extension|actor|defmodule|mixin|typealias)\s+(?:class\s+|struct\s+)?(?:\[\[[^\]]*\]\]\s*|[A-Z_]+_EXPORT\s+)?([A-Za-z_$][\w$.:]*)`, "", 2, 1, 0, "class", "struct", "interface", "enum", "trait", "protocol", "object", "record", "union", "message", "service", "module", "namespace", "impl", "extension", "actor", "mixin", "typealias")
 	// def foo, fn foo, fun Foo.bar, function foo, func foo, rpc Foo, sub foo
-	funcRule = r(`^\s*`+mods+`(?:def|defp|fn|fun|func|function\*?|sub|proc|rpc|macro|defmacro)\s+(?:<[^>]*>\s*)?(?:([\w$]+)[.:])?([A-Za-z_$][\w$]*[!?]?)`, "func", 2, 0, 1)
+	funcRule = r(`^\s*`+mods+`(?:def|defp|fn|fun|func|function\*?|sub|proc|rpc|macro|defmacro)\s+(?:<[^>]*>\s*)?(?:([\w$]+)[.:])?([A-Za-z_$][\w$]*[!?]?)`, "func", 2, 0, 1, "def", "fn ", "fun ", "func", "sub ", "proc ", "rpc ", "macro")
 	// Go: func (r *Recv) Name(  /  type Name ...
-	goFunc = r(`^func\s+(?:\(\s*\w*\s*\*?\s*(\w+)(?:\[[^\]]*\])?\s*\)\s*)?(\w+)`, "func", 2, 0, 1)
-	goType = r(`^type\s+(\w+)\s+(struct|interface)?`, "", 1, 2, 0)
+	goFunc = r(`^func\s+(?:\(\s*\w*\s*\*?\s*(\w+)(?:\[[^\]]*\])?\s*\)\s*)?(\w+)`, "func", 2, 0, 1, "func")
+	goType = r(`^type\s+(\w+)\s+(struct|interface)?`, "", 1, 2, 0, "type")
 	// C-family function or method definition/declaration: type name(...)
-	cFunc = r(`^\s*(?:template\s*<[^>]*>\s*)?(?:[\w:<>,\*&\[\]~]+\s+)+[\*&]*((?:[\w~]+(?:<[^<>]*>)?::)*)([~\w]+)\s*\([^;]*$`, "func", 2, 0, 1)
-	cDecl = r(`^\s*(?:[\w:<>,\*&\[\]~]+\s+)+[\*&]*((?:[\w~]+::)*)([~\w]+)\s*\([^;{]*\)\s*(?:const\s*)?(?:override\s*|final\s*|noexcept\s*|=\s*0\s*|=\s*default\s*|=\s*delete\s*)*;`, "func", 2, 0, 1)
-	cCtor = r(`^\s*((?:\w+::)+)(~?\w+)\s*\(`, "func", 2, 0, 1)
+	cFunc = r(`^\s*(?:template\s*<[^>]*>\s*)?(?:[\w:<>,\*&\[\]~]+\s+)+[\*&]*((?:[\w~]+(?:<[^<>]*>)?::)*)([~\w]+)\s*\([^;]*$`, "func", 2, 0, 1, "(")
+	cDecl = r(`^\s*(?:[\w:<>,\*&\[\]~]+\s+)+[\*&]*((?:[\w~]+::)*)([~\w]+)\s*\([^;{]*\)\s*(?:const\s*)?(?:override\s*|final\s*|noexcept\s*|=\s*0\s*|=\s*default\s*|=\s*delete\s*)*;`, "func", 2, 0, 1, "(")
+	cCtor = r(`^\s*((?:\w+::)+)(~?\w+)\s*\(`, "func", 2, 0, 1, "::")
 	// JS/TS class method:   name(args) {   /   async name(args): T {
-	jsMethod = r(`^\s+`+mods+`(?:get\s+|set\s+|\*\s*)?([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::\s*[^{=]+)?\{\s*$`, "method", 1, 0, 0)
+	jsMethod = r(`^\s+`+mods+`(?:get\s+|set\s+|\*\s*)?([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::\s*[^{=]+)?\{\s*$`, "method", 1, 0, 0, "{")
 	// const foo = (...) => / function
-	jsArrow  = r(`^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*(?::[^=]+)?=>|[A-Za-z_$][\w$]*\s*=>)`, "func", 1, 0, 0)
-	tsType   = r(`^\s*(?:export\s+)?(?:declare\s+)?type\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*=`, "type", 1, 0, 0)
-	shFunc   = r(`^\s*(?:function\s+)?([A-Za-z_][\w:.-]*)\s*\(\s*\)\s*\{?\s*$`, "func", 1, 0, 0)
-	mdHead   = r(`^(#{1,6})\s+(.+?)\s*#*\s*$`, "heading", 2, 1, 0)
-	bpModule = r(`^([a-z_][\w]*)\s*\{\s*$`, "module", 1, 0, 0)
-	bpName   = r(`^\s+name\s*:\s*"([^"]+)"`, "name", 1, 0, 0)
-	makeRule = r(`^([A-Za-z_][\w./%-]*)\s*:(?:[^=]|$)`, "target", 1, 0, 0)
+	jsArrow  = r(`^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*(?::[^=]+)?=>|[A-Za-z_$][\w$]*\s*=>)`, "func", 1, 0, 0, "=>", "function")
+	tsType   = r(`^\s*(?:export\s+)?(?:declare\s+)?type\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*=`, "type", 1, 0, 0, "type")
+	shFunc   = r(`^\s*(?:function\s+)?([A-Za-z_][\w:.-]*)\s*\(\s*\)\s*\{?\s*$`, "func", 1, 0, 0, "()")
+	mdHead   = r(`^(#{1,6})\s+(.+?)\s*#*\s*$`, "heading", 2, 1, 0, "#")
+	bpModule = r(`^([a-z_][\w]*)\s*\{\s*$`, "module", 1, 0, 0, "{")
+	bpName   = r(`^\s+name\s*:\s*"([^"]+)"`, "name", 1, 0, 0, "name")
+	makeRule = r(`^([A-Za-z_][\w./%-]*)\s*:(?:[^=]|$)`, "target", 1, 0, 0, ":")
 	sqlRule  = r(`(?i)^\s*create\s+(?:or\s+replace\s+)?(?:temp\w*\s+)?(table|view|index|function|procedure|trigger|type)\s+(?:if\s+not\s+exists\s+)?([\w."]+)`, "", 2, 1, 0)
 )
 
@@ -148,6 +163,9 @@ func Extract(langName, src string) []Symbol {
 			continue
 		}
 		for _, ru := range rules {
+			if !ru.worth(line) {
+				continue
+			}
 			m := ru.re.FindStringSubmatch(line)
 			if m == nil {
 				continue

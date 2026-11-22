@@ -30,9 +30,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ndesai/codesearch/index"
 	"github.com/ndesai/codesearch/internal/config"
+	"github.com/ndesai/codesearch/internal/lang"
+	"github.com/ndesai/codesearch/internal/outline"
+	"github.com/ndesai/codesearch/internal/symbols"
 )
 
 var errLocked = errors.New("another indexer is already running")
@@ -405,6 +409,7 @@ func updateRepo(cfg *config.Config, repo *config.Repo, opts Options) (res *Resul
 	keep := map[string]bool{"manifest": true}
 	for _, s := range m.Shards {
 		keep[s.File] = true
+		keep[SymbolFile(s.File)] = true
 	}
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
@@ -541,15 +546,17 @@ func buildShard(root, dir, name string, p *shardPlan, st *Status) (err error) {
 	out := filepath.Join(dir, name)
 	tmp := filepath.Join(index.TempDir, name+".new")
 	defer os.Remove(tmp)
+	symOut := filepath.Join(dir, SymbolFile(name))
+	var syms []symbols.File
 
 	if p.old == nil {
 		ix := index.Create(tmp)
 		ix.AddRoots([]index.Path{index.MakePath(root)})
-		var names []string
+		var rels []string
 		for _, f := range p.files {
-			names = append(names, abs(f.Path))
+			rels = append(rels, f.Path)
 		}
-		addFiles(ix, names, st)
+		syms = addFiles(ix, root, rels, st)
 		ix.Flush()
 	} else {
 		// Delta: index the changed files under roots naming every
@@ -560,17 +567,35 @@ func buildShard(root, dir, name string, p *shardPlan, st *Status) (err error) {
 		defer os.Remove(delta)
 		ix := index.Create(delta)
 		var roots []index.Path
-		var names []string
+		var rels []string
+		touched := map[string]bool{}
 		for _, t := range p.touched {
 			roots = append(roots, index.MakePath(abs(t.path)))
+			touched[t.path] = true
 			if !t.deleted {
-				names = append(names, abs(t.path))
+				rels = append(rels, t.path)
 			}
 		}
 		ix.AddRoots(roots)
-		addFiles(ix, names, st)
+		syms = addFiles(ix, root, rels, st)
 		ix.Flush()
 		index.Merge(tmp, filepath.Join(dir, p.old.File), delta)
+
+		// Symbols: the old shard's, minus every touched file,
+		// plus the changed files' new symbols.
+		old, err := symbols.Open(filepath.Join(dir, SymbolFile(p.old.File)))
+		if err != nil {
+			return err // rebuild the shard instead
+		}
+		for _, f := range old.Files() {
+			if !touched[f.Path] {
+				syms = append(syms, f)
+			}
+		}
+		old.Close()
+	}
+	if err := symbols.Write(symOut, syms); err != nil {
+		return err
 	}
 
 	// Sanity check the result before installing it.
@@ -582,30 +607,44 @@ func buildShard(root, dir, name string, p *shardPlan, st *Status) (err error) {
 	return os.Rename(tmp, out)
 }
 
-// addFiles adds the named files to ix in order, reading ahead in
-// parallel so that indexing is not limited by I/O latency.
-func addFiles(ix *index.IndexWriter, names []string, st *Status) {
+// SymbolFile returns the name of the symbol table stored next to the
+// index shard file shard.
+func SymbolFile(shard string) string {
+	return strings.TrimSuffix(shard, ".idx") + ".sym"
+}
+
+// addFiles adds the files (slash-separated paths relative to root) to ix
+// in order, reading ahead in parallel so that indexing is not limited by
+// I/O latency, and returns the symbols defined in the files it indexed.
+// Symbol extraction runs in the parallel readers too.
+func addFiles(ix *index.IndexWriter, root string, rels []string, st *Status) []symbols.File {
 	type result struct {
 		data []byte
+		syms []symbols.Symbol
 		err  error
 	}
 	const ahead = 16
 	ch := make(chan chan result, ahead)
 	go func() {
 		sem := make(chan struct{}, 8)
-		for _, name := range names {
+		for _, rel := range rels {
 			c := make(chan result, 1)
 			ch <- c
 			sem <- struct{}{}
 			go func() {
-				data, err := os.ReadFile(name)
+				data, err := os.ReadFile(root + string(filepath.Separator) + filepath.FromSlash(rel))
+				var syms []symbols.Symbol
+				if err == nil && !looksBinary(data) {
+					syms = extractSymbols(rel, data)
+				}
 				<-sem
-				c <- result{data, err}
+				c <- result{data, syms, err}
 			}()
 		}
 		close(ch)
 	}()
-	for _, name := range names {
+	var out []symbols.File
+	for _, rel := range rels {
 		r := <-<-ch
 		if st != nil {
 			st.Indexed.Add(1)
@@ -616,12 +655,41 @@ func addFiles(ix *index.IndexWriter, names []string, st *Status) {
 		if looksBinary(r.data) {
 			continue
 		}
+		name := root + string(filepath.Separator) + filepath.FromSlash(rel)
+		before := ix.NumFiles()
 		if err := ix.Add(name, bytes.NewReader(r.data)); err != nil && !errors.Is(err, io.EOF) {
 			if !strings.Contains(err.Error(), "malformed name") {
 				log.Printf("%s: %v", name, err)
 			}
 		}
+		// Keep symbols only for files the index accepted as text.
+		if ix.NumFiles() > before && len(r.syms) > 0 {
+			out = append(out, symbols.File{Path: rel, Symbols: r.syms})
+		}
 	}
+	return out
+}
+
+// extractSymbols returns the definitions in a file, from its outline.
+func extractSymbols(rel string, data []byte) []symbols.Symbol {
+	if !utf8.Valid(data) {
+		return nil
+	}
+	var syms []symbols.Symbol
+	for _, s := range outline.Extract(lang.Detect(rel).Name, string(data)) {
+		if strings.HasPrefix(s.Kind, "h") && len(s.Kind) == 2 {
+			continue // Markdown headings are not symbols
+		}
+		name := s.Name
+		if i := strings.LastIndexAny(name, ".:"); i >= 0 {
+			name = name[i+1:] // Reader.Read -> Read
+		}
+		if name == "" {
+			continue
+		}
+		syms = append(syms, symbols.Symbol{Name: name, Kind: s.Kind, Line: s.Line, Depth: s.Depth})
+	}
+	return syms
 }
 
 // looksBinary reports whether data is clearly not text,

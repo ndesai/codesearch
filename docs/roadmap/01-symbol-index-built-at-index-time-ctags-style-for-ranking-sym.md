@@ -16,3 +16,20 @@ Extract symbols (name, kind, line, enclosing scope) for every file while indexin
 - `sym:RenderFrameHostImpl` on Chromium no longer lists `class RenderFrameHostImpl;` forward declarations.
 - Incremental updates keep the symbol table in sync (extend the existing incremental-vs-full equivalence test).
 - Index size grows by no more than ~15%.
+
+## Status: done
+
+- Symbols are extracted with `internal/outline` in the indexer's parallel file
+  readers and stored per shard in a `.sym` table (`internal/symbols`): 12-byte
+  records sorted by name, memory-mapped for lookups. Incremental updates merge
+  the old table with the changed files' symbols; the incremental-vs-full test
+  compares symbol tables too.
+- `sym:` queries and cross references use the table; files containing table
+  definitions are searched first, so definitions are no longer lost to the
+  candidate limit. Heuristics still find fields, constants and the like.
+- Forward declarations (`class Foo;`, `friend class Foo;`) and constructor
+  initializer lines are no longer definitions. On Chromium,
+  `sym:RenderFrameHostImpl` went from 120 files to 5.
+- Cost on Chromium (802k files): full index 21 s → 27–29 s; symbol tables add
+  112 MB to a 489 MB index (+23%, above the 15% target: Chromium has ~6M
+  symbols). Universal Ctags support was not added.
