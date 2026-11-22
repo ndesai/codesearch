@@ -394,6 +394,7 @@ func matchCommit(c *commitMatch, names, prefix string, q *search.Query) bool {
 		}
 	}
 	c.NumFiles = len(files)
+	c.Files = []commitFile{} // never null in JSON: merges change no files
 	matched := false
 	if len(files) == 0 {
 		matched = q.Match("", has, nil)

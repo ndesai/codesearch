@@ -6,10 +6,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/ndesai/codesearch/internal/search"
 )
 
 func TestValidRev(t *testing.T) {
@@ -85,5 +89,19 @@ func TestAnchoredPrefix(t *testing.T) {
 		if got != want {
 			t.Errorf("anchoredPrefix(%q) = %q, want %q", expr, got, want)
 		}
+	}
+}
+
+func TestMatchCommitNoFiles(t *testing.T) {
+	q, err := search.ParseQuery("type:commit out-of-bounds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &commitMatch{Subject: "Merge: fix out-of-bounds read"}
+	if !matchCommit(c, "", "", q) {
+		t.Fatal("matchCommit = false")
+	}
+	if b, _ := json.Marshal(c); !strings.Contains(string(b), `"files":[]`) {
+		t.Errorf("JSON = %s, want an empty files list", b)
 	}
 }
