@@ -69,7 +69,7 @@ type Term struct {
 	Pattern  string // regexp syntax, including case flags
 	Literal  bool   // Text is matched literally
 	FoldCase bool
-	Region   region // part of the file a match must be in (usage:, comment:, string:)
+	Region   region            // part of the file a match must be in (usage:, comment:, string:)
 	Std      *stdregexp.Regexp // for finding match ranges within lines
 	syntax   *syntax.Regexp
 }
