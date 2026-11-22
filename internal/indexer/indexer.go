@@ -69,6 +69,9 @@ type Result struct {
 	Full          bool
 	Duration      time.Duration
 	Err           error
+	// ChangedFiles are the files added or modified by an incremental
+	// update (at most MaxChanged).
+	ChangedFiles []string
 }
 
 func (r *Result) Changed() bool {
@@ -378,6 +381,7 @@ func updateRepo(cfg *config.Config, repo *config.Repo, opts Options) (res *Resul
 		Generation:  gen,
 		Updated:     time.Now(),
 		Files:       files,
+		Changed:     res.ChangedFiles,
 	}
 	for _, p := range plans {
 		if p.err != nil {
@@ -502,6 +506,11 @@ func planIncremental(old *Manifest, files []FileInfo, target int, res *Result) [
 		}
 		cur := files[j0:j]
 
+		for _, t := range tch {
+			if !t.deleted && len(res.ChangedFiles) < MaxChanged {
+				res.ChangedFiles = append(res.ChangedFiles, t.path)
+			}
+		}
 		switch {
 		case len(tch) == 0:
 			plans = append(plans, &shardPlan{start: sh.Start, files: cur, old: sh, result: *sh})

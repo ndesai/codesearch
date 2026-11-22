@@ -332,7 +332,7 @@ async function renderSearch(q) {
   summary += ` <span class="muted">(${r.elapsed.toFixed(3)} s)</span>`;
   if (r.timedOut) summary += ' · <span class="warn">search timed out; results are partial</span>';
   else if (r.truncated) summary += ' · <span class="warn">showing the first results only; refine your query</span>';
-  parts.push(`<div class="summary"><span class="stext">${summary}</span><button class="tbtn savebtn" title="Save this search">☆ Save search</button></div>`);
+  parts.push(`<div class="summary"><span class="stext">${summary}</span><button class="tbtn monbtn" hidden></button><button class="tbtn savebtn" title="Save this search">☆ Save search</button></div>`);
   if (r.nameMatches && r.nameMatches.length) {
     parts.push(`<div class="namehits"><div class="section-title">Files and folders${r.numNameMatches > r.nameMatches.length ? ` <span class="muted" style="text-transform:none;letter-spacing:0">(${fmtNum(r.numNameMatches)}; <a href="${searchURL('file:' + q)}">see all</a>)</span>` : ''}</div><ul>` +
       r.nameMatches.map(f => `<li><a href="${fileURL(f.repo, f.path)}"><span class="repo-chip">${esc(f.repo)}</span>${f.dir ? icons.dir : icons.file}${pathHTML(f.path + (f.dir ? '/' : ''))}</a></li>`).join('') +
@@ -1601,24 +1601,41 @@ async function loadSaved() {
   if (view && view.kind === 'search') setupSaveButton(view.q);
 }
 
-async function setSaved(query, add, name) {
+async function savedAction(body, message) {
   try {
     const r = await fetch('/api/saved', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Requested-With': 'cs'},
-      body: JSON.stringify({action: add ? 'add' : 'remove', query, name: name || ''}),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     savedList = data.saved;
-    toast(add ? 'Search saved' : 'Saved search removed');
-  } catch (e) { toast(e.message); }
+    if (message) toast(message);
+    return true;
+  } catch (e) { toast(e.message); return false; }
 }
+
+const setSaved = (query, add, name) =>
+  savedAction({action: add ? 'add' : 'remove', query, name: name || ''}, add ? 'Search saved' : 'Saved search removed');
 
 function setupSaveButton(q) {
   const b = $('.savebtn', app);
   if (!b) return;
-  const saved = savedList.some(x => x.query === q);
+  const entry = savedList.find(x => x.query === q);
+  const saved = !!entry;
+  const mb = $('.monbtn', app);
+  if (mb) {
+    mb.hidden = !saved;
+    const on = entry && entry.monitor;
+    mb.textContent = on ? '🔔 Monitoring' : '🔕 Monitor';
+    mb.classList.toggle('on', !!on);
+    mb.title = on ? 'Stop alerting on new matches' : 'Alert when new code matches this search (checked after each index update)';
+    mb.onclick = async () => {
+      await savedAction({action: 'monitor', query: q, on: !on}, on ? 'Monitoring stopped' : 'Monitoring: new matches will appear on the home page');
+      setupSaveButton(q);
+    };
+  }
   b.textContent = saved ? '★ Saved' : '☆ Save search';
   b.classList.toggle('on', saved);
   b.title = saved ? 'Remove from saved searches' : 'Save this search';
@@ -1638,9 +1655,25 @@ function renderHomeLists() {
   if (!el) return;
   const qs = recent.get('q').slice(0, 8), fs = recent.get('f').slice(0, 8);
   let html = '';
+  // New matches from monitored searches, newest first.
+  const alerts = [];
+  for (const x of savedList) for (const [i, a] of (x.alerts || []).entries()) alerts.push({...a, search: x, isNew: i < x.unseen});
+  alerts.sort((a, b) => new Date(b.time) - new Date(a.time));
+  const unseen = savedList.reduce((n, x) => n + (x.unseen || 0), 0);
+  if (alerts.length) {
+    html += `<div class="section-title"><span>Monitor alerts${unseen ? ` <span class="badge">${unseen} new</span>` : ''}</span><span class="grow"></span>` +
+      (unseen ? '<button class="btn" data-seen="1">Mark all seen</button>' : '') + '</div><ul class="alerts">' +
+      alerts.slice(0, 20).map(a => {
+        const l = (a.lines || [])[0];
+        return `<li${a.isNew ? ' class="new"' : ''}><a href="${fileURL(a.repo, a.path, {q: a.search.query, line: l && l.line})}">
+          <span class="repo-chip">${esc(a.repo)}</span>${pathHTML(a.path)}${l ? `<span class="aline">:${l.line}</span>` : ''}</a>
+          <span class="muted asearch">${esc(a.search.name)} · ${fmtAgo(a.time)}</span>
+          ${l ? `<div class="atext">${esc(l.text.trim())}</div>` : ''}</li>`;
+      }).join('') + '</ul>';
+  }
   if (savedList.length) {
     html += '<div class="section-title"><span>Saved searches</span></div><div class="hlist">' +
-      savedList.map(x => `<span class="hchip saved"><a href="${searchURL(x.query)}" title="${esc(x.query)}"><span class="star">★</span>${esc(x.name)}</a><button data-unsave="${esc(x.query)}" title="Remove">×</button></span>`).join('') + '</div>';
+      savedList.map(x => `<span class="hchip saved"><a href="${searchURL(x.query)}" title="${esc(x.query)}${x.monitor ? ' (monitored)' : ''}"><span class="star">★</span>${esc(x.name)}${x.monitor ? ' <span class="bell" title="Monitored">🔔</span>' : ''}${x.unseen ? ` <span class="badge">${x.unseen}</span>` : ''}</a><button data-unsave="${esc(x.query)}" title="Remove">×</button></span>`).join('') + '</div>';
   }
   if (qs.length) {
     html += '<div class="section-title"><span>Recent searches</span><span class="grow"></span><button class="btn" data-clear="q">Clear</button></div><div class="hlist">' +
@@ -1656,6 +1689,10 @@ function renderHomeLists() {
     if (un) { await setSaved(un.dataset.unsave, false); renderHomeLists(); }
     const cl = e.target.closest('[data-clear]');
     if (cl) { recent.clear(cl.dataset.clear); renderHomeLists(); }
+    if (e.target.closest('[data-seen]')) {
+      for (const x of savedList.filter(x => x.unseen)) await savedAction({action: 'seen', query: x.query});
+      renderHomeLists();
+    }
   };
 }
 

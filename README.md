@@ -30,6 +30,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - Expand any result in place to see the lines around each match.
 - Saved searches (shared across your devices) and per-browser history of
   searches and recently viewed files.
+- Code monitors: mark a saved search as monitored to be alerted (on the home
+  page, and optionally through a webhook) when new code matches it.
 
 **Code browsing**
 - Syntax highlighting for about 300 languages (via [Chroma](https://github.com/alecthomas/chroma)),
@@ -166,6 +168,7 @@ are relative to the configuration file.
 | `update_interval` | `0` (off) | How often `csweb` re-indexes in the background, e.g. `10m`. |
 | `exclude` | | Patterns skipped in every repository (see below). |
 | `use_default_excludes` | `true` | Skip binaries, images, archives, `node_modules`, minified files and similar. |
+| `monitor_webhook` | | URL that receives a JSON `POST` (`search`, `query`, `text`, `matches`) when a monitored search has new matches; works with Slack incoming webhooks, ntfy and the like. |
 | `rank_recent` | `true` | Rank recently modified files slightly higher (the boost halves every 30 days). |
 | `use_gitignore` | `true` | Skip files ignored by `.gitignore` files (at any depth) and `.git/info/exclude`. |
 | `include_hidden` | `false` | Index files and folders whose names start with `.`. |
@@ -298,8 +301,8 @@ Everything below lives in the index directory (`index_dir`) unless noted.
   tables (`.sym`) and manifest.
   Repositories removed from the configuration have their index deleted on the
   next update.
-- `index_dir/saved-searches.json`: saved searches, shared by every browser that
-  uses the server.
+- `index_dir/saved-searches.json`: saved searches and their monitor alerts,
+  shared by every browser that uses the server.
 - Each browser's local storage: recent searches, recently viewed files, and UI
   preferences such as the theme.
 

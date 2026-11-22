@@ -63,6 +63,9 @@ type Config struct {
 	UseDefaultExcludes *bool `yaml:"use_default_excludes"`
 	// IncludeHidden indexes files and directories whose names begin with ".".
 	IncludeHidden bool `yaml:"include_hidden"`
+	// MonitorWebhook, if set, receives a JSON POST when a monitored saved
+	// search has new matches.
+	MonitorWebhook string `yaml:"monitor_webhook"`
 	// RankRecent boosts recently modified files in search results
 	// (default true).
 	RankRecent *bool `yaml:"rank_recent"`
@@ -253,6 +256,9 @@ func Parse(file string, data []byte) (*Config, error) {
 		c.IndexDir = DefaultIndexDir()
 	} else if c.IndexDir, err = resolve(c.IndexDir); err != nil {
 		return nil, errorf("index_dir: %v", err)
+	}
+	if c.MonitorWebhook != "" && !strings.HasPrefix(c.MonitorWebhook, "http://") && !strings.HasPrefix(c.MonitorWebhook, "https://") {
+		return nil, errorf("monitor_webhook must be an http:// or https:// URL")
 	}
 	if c.Listen == "" {
 		c.Listen = "localhost:2473"

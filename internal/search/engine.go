@@ -31,6 +31,11 @@ type Engine struct {
 	cfg    *config.Config
 	repos  []*Repo
 	byName map[string]*Repo
+
+	// OnUpdate, if set, is called (in its own goroutine) after a
+	// repository's index is replaced by an incremental update, with the
+	// files that update added or modified.
+	OnUpdate func(repo string, changed []string)
 }
 
 // A Repo is one configured repository and its current index snapshot.
@@ -93,7 +98,9 @@ func (e *Engine) Repos() []*Repo { return e.repos }
 // Refresh reloads any repository whose manifest has changed.
 func (e *Engine) Refresh() {
 	for _, r := range e.repos {
-		r.refresh(e.cfg)
+		if changed := r.refresh(e.cfg); len(changed) > 0 && e.OnUpdate != nil {
+			go e.OnUpdate(r.Name, changed)
+		}
 	}
 }
 
@@ -111,7 +118,10 @@ func (e *Engine) Watch(interval time.Duration, stop <-chan struct{}) {
 	}
 }
 
-func (r *Repo) refresh(cfg *config.Config) {
+// refresh reloads the repository's index if its manifest changed. It
+// returns the files changed by the update, if it was incremental and not
+// the first load.
+func (r *Repo) refresh(cfg *config.Config) (changed []string) {
 	mfile := indexer.ManifestFile(cfg, r.Name)
 	st, err := os.Stat(mfile)
 	r.mu.Lock()
@@ -121,13 +131,13 @@ func (r *Repo) refresh(cfg *config.Config) {
 	}
 	r.mu.Unlock()
 	if err != nil || unchanged {
-		return
+		return nil
 	}
 
 	m, err := indexer.ReadManifestHeader(mfile)
 	if err != nil || m == nil {
 		r.setErr(fmt.Errorf("reading manifest: %v", err))
-		return
+		return nil
 	}
 	snap := &snapshot{repo: r, manifest: m, mfile: mfile}
 	snap.refs.Store(1)
@@ -139,7 +149,7 @@ func (r *Repo) refresh(cfg *config.Config) {
 			// the next refresh will pick up the new manifest.
 			snap.close()
 			r.setErr(err)
-			return
+			return nil
 		}
 		sh := &shard{file: s.File, ix: ix, prefix: len(m.Root) + 1}
 		if t, err := symbols.Open(filepath.Join(dir, indexer.SymbolFile(s.File))); err == nil {
@@ -160,6 +170,9 @@ func (r *Repo) refresh(cfg *config.Config) {
 
 	r.mu.Lock()
 	old := r.cur
+	if old != nil && m.Generation > old.manifest.Generation {
+		changed = m.Changed
+	}
 	r.cur = snap
 	r.modTime = st.ModTime()
 	r.size = st.Size()
@@ -168,6 +181,7 @@ func (r *Repo) refresh(cfg *config.Config) {
 	if old != nil {
 		old.release()
 	}
+	return changed
 }
 
 func (r *Repo) setErr(err error) {

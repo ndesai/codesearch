@@ -664,6 +664,11 @@ type savedSearch struct {
 	Name    string    `json:"name"`
 	Query   string    `json:"query"`
 	Created time.Time `json:"created"`
+	// Monitored searches are re-run on the files each index update
+	// changes; new matches are recorded as alerts (see monitors.go).
+	Monitor bool           `json:"monitor,omitempty"`
+	Unseen  int            `json:"unseen,omitempty"`
+	Alerts  []monitorAlert `json:"alerts,omitempty"` // newest first
 }
 
 var savedMu sync.Mutex
@@ -680,15 +685,25 @@ func (s *server) loadSaved() []savedSearch {
 	return list
 }
 
+func (s *server) writeSaved(list []savedSearch) error {
+	data, _ := json.MarshalIndent(list, "", "  ")
+	tmp := s.savedFile() + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.savedFile())
+}
+
 func (s *server) handleSaved(w http.ResponseWriter, r *http.Request) {
 	savedMu.Lock()
 	defer savedMu.Unlock()
 	list := s.loadSaved()
 	if r.Method == http.MethodPost {
 		var req struct {
-			Action string `json:"action"` // "add" or "remove"
+			Action string `json:"action"` // "add", "remove", "monitor" or "seen"
 			Query  string `json:"query"`
 			Name   string `json:"name"`
+			On     bool   `json:"on"` // for "monitor"
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err)
@@ -700,28 +715,45 @@ func (s *server) handleSaved(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, errors.New("invalid saved search"))
 			return
 		}
-		list = slices.DeleteFunc(list, func(x savedSearch) bool { return x.Query == req.Query })
+		i := slices.IndexFunc(list, func(x savedSearch) bool { return x.Query == req.Query })
 		switch req.Action {
 		case "add":
 			if req.Name == "" {
 				req.Name = req.Query
 			}
-			list = append([]savedSearch{{Name: req.Name, Query: req.Query, Created: time.Now()}}, list...)
+			entry := savedSearch{Name: req.Name, Query: req.Query, Created: time.Now()}
+			if i >= 0 {
+				entry = list[i] // keep its monitor settings and alerts
+				entry.Name = req.Name
+				list = slices.Delete(list, i, i+1)
+			}
+			list = append([]savedSearch{entry}, list...)
 			if len(list) > 500 {
 				list = list[:500]
 			}
 		case "remove":
+			if i >= 0 {
+				list = slices.Delete(list, i, i+1)
+			}
+		case "monitor":
+			if i < 0 {
+				writeError(w, http.StatusNotFound, errors.New("not a saved search"))
+				return
+			}
+			if q, err := search.ParseQuery(req.Query); err == nil && (q.Type != "" || len(q.SymFilters) > 0) && req.On {
+				writeError(w, http.StatusBadRequest, errors.New("only code searches can be monitored"))
+				return
+			}
+			list[i].Monitor = req.On
+		case "seen":
+			if i >= 0 {
+				list[i].Unseen = 0
+			}
 		default:
 			writeError(w, http.StatusBadRequest, errors.New("unknown action"))
 			return
 		}
-		data, _ := json.MarshalIndent(list, "", "  ")
-		tmp := s.savedFile() + ".tmp"
-		if err := os.WriteFile(tmp, data, 0644); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if err := os.Rename(tmp, s.savedFile()); err != nil {
+		if err := s.writeSaved(list); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}

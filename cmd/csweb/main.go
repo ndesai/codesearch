@@ -79,9 +79,11 @@ func main() {
 	}
 
 	engine := search.New(cfg)
+	var s *server
+	engine.OnUpdate = func(repo string, changed []string) { s.runMonitors(repo, changed) }
 	go engine.Watch(3*time.Second, nil)
 
-	s := &server{
+	s = &server{
 		engine: engine,
 		status: new(indexer.Status),
 		cache:  newResultCache(32, 2*time.Minute),

@@ -5,6 +5,9 @@
 package indexer
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -182,6 +185,13 @@ func TestIncremental(t *testing.T) {
 	if r.Full || r.Added != 2 || r.Modified != 1 || r.Deleted != 1 || r.ShardsDelta == 0 || r.ShardsKept == 0 {
 		t.Fatalf("incremental update: %v", r)
 	}
+	slices.Sort(r.ChangedFiles)
+	if strings.Join(r.ChangedFiles, " ") != "d0/aa_first.go d0/f00.go d2/added.go" {
+		t.Errorf("changed files: %v", r.ChangedFiles)
+	}
+	if m, _ := ReadManifestHeader(ManifestFile(cfg, "test")); len(m.Changed) != 3 {
+		t.Errorf("manifest Changed: %v", m.Changed)
+	}
 	check("modify/add/delete")
 
 	// A file replaced by a directory of the same name.
@@ -236,8 +246,9 @@ func TestIncremental(t *testing.T) {
 func TestManifestRoundTrip(t *testing.T) {
 	m := &Manifest{
 		Root: "/src", Fingerprint: "fp", Generation: 7, Updated: time.Unix(0, 12345),
-		Shards: []Shard{{Start: "", File: "a.idx", Files: 2, Bytes: 10}, {Start: "b/c", File: "b.idx", Files: 1, Bytes: 5}},
-		Files:  []FileInfo{{"a/b.go", 1, 100}, {"a/bc.go", 2, -5}, {"b/c", 3, 1 << 60}},
+		Shards:  []Shard{{Start: "", File: "a.idx", Files: 2, Bytes: 10}, {Start: "b/c", File: "b.idx", Files: 1, Bytes: 5}},
+		Changed: []string{"a/b.go"},
+		Files:   []FileInfo{{"a/b.go", 1, 100}, {"a/bc.go", 2, -5}, {"b/c", 3, 1 << 60}},
 	}
 	f := filepath.Join(t.TempDir(), "m")
 	if err := m.Write(f); err != nil {
@@ -251,8 +262,19 @@ func TestManifestRoundTrip(t *testing.T) {
 		t.Fatalf("round trip:\n%v\n%v", m, m2)
 	}
 	h, err := ReadManifestHeader(f)
-	if err != nil || h.NumFiles() != 3 || len(h.Files) != 0 {
+	if err != nil || h.NumFiles() != 3 || len(h.Files) != 0 || len(h.Changed) != 1 {
 		t.Fatalf("header: %v %v", h, err)
+	}
+	// Version 1 manifests (without Changed) still read.
+	m.Changed = nil
+	m.Write(f)
+	m1, err := encodeV1ForTest(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(f, m1, 0644)
+	if back, err := ReadManifest(f); err != nil || fmt.Sprint(back.Files) != fmt.Sprint(m.Files) || back.Changed != nil {
+		t.Fatalf("v1 manifest: %v %v", back, err)
 	}
 	// Truncation is detected.
 	data, _ := os.ReadFile(f)
@@ -285,4 +307,38 @@ func TestIgnoreStack(t *testing.T) {
 	if !s.Ignored("a/b/gen", true) || IgnoreStack(root, "").Ignored("a/out", true) || !IgnoreStack(root, "").Ignored("out", true) {
 		t.Error("directory rules")
 	}
+}
+
+// encodeV1ForTest encodes m in the version 1 format (no Changed list),
+// as older versions of the indexer wrote it.
+func encodeV1ForTest(m *Manifest) ([]byte, error) {
+	f := filepath.Join(os.TempDir(), fmt.Sprintf("v1-%d", time.Now().UnixNano()))
+	defer os.Remove(f)
+	if err := m.Write(f); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		return nil, err
+	}
+	// The v2 header is the v1 header plus a varint count (0) after the
+	// shards; find it by re-parsing the shard section.
+	r := bufio.NewReader(bytes.NewReader(data[len(manifestMagic):]))
+	readN := func() int { v, _ := binary.ReadUvarint(r); return int(v) }
+	readI := func() { binary.ReadVarint(r) }
+	readS := func() { n := readN(); r.Discard(n) }
+	readS()
+	readS()
+	readN()
+	readI()
+	for range readN() {
+		readS()
+		readS()
+		readN()
+		readI()
+	}
+	pos := len(data) - len(manifestMagic) - r.Buffered()
+	pos += len(manifestMagic)
+	out := append([]byte(manifestMagicV1), data[len(manifestMagic):pos]...)
+	return append(out, data[pos+1:]...), nil // skip the zero count
 }

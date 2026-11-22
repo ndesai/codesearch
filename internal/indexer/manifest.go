@@ -28,8 +28,15 @@ type Manifest struct {
 	Generation  int
 	Updated     time.Time
 	Shards      []Shard
-	Files       []FileInfo
+	// Changed lists the files added or modified by the incremental update
+	// that wrote this manifest (at most MaxChanged; nil after a full
+	// rebuild). Code monitors use it to look for new matches.
+	Changed []string
+	Files   []FileInfo
 }
+
+// MaxChanged is the most changed files a manifest records.
+const MaxChanged = 10000
 
 // A Shard is one index file covering a contiguous range of paths.
 type Shard struct {
@@ -47,7 +54,8 @@ type FileInfo struct {
 }
 
 const (
-	manifestMagic   = "codesearch manifest 1\n"
+	manifestMagic   = "codesearch manifest 2\n"
+	manifestMagicV1 = "codesearch manifest 1\n" // without Changed
 	manifestTrailer = "\nend manifest\n"
 )
 
@@ -110,9 +118,10 @@ func decodeManifest(r *bufio.Reader, headerOnly bool) (m *Manifest, err error) {
 		return string(b)
 	}
 	magic := make([]byte, len(manifestMagic))
-	if _, err := io.ReadFull(r, magic); err != nil || string(magic) != manifestMagic {
+	if _, err := io.ReadFull(r, magic); err != nil || string(magic) != manifestMagic && string(magic) != manifestMagicV1 {
 		return nil, errCorrupt
 	}
+	v1 := string(magic) == manifestMagicV1
 	m = new(Manifest)
 	m.Root = readS()
 	m.Fingerprint = readS()
@@ -125,6 +134,14 @@ func decodeManifest(r *bufio.Reader, headerOnly bool) (m *Manifest, err error) {
 		s.File = readS()
 		s.Files = readN()
 		s.Bytes = readI()
+	}
+	if !v1 {
+		if n := readN(); n > 0 {
+			m.Changed = make([]string, n)
+			for i := range m.Changed {
+				m.Changed[i] = readS()
+			}
+		}
 	}
 	if headerOnly {
 		return m, nil
@@ -174,6 +191,10 @@ func (m *Manifest) Write(file string) error {
 		writeS(s.File)
 		writeN(s.Files)
 		writeI(s.Bytes)
+	}
+	writeN(len(m.Changed))
+	for _, c := range m.Changed {
+		writeS(c)
 	}
 	writeN(len(m.Files))
 	last := ""

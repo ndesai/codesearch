@@ -32,6 +32,9 @@ type Options struct {
 	MaxFiles        int           // stop after this many matching files (default 2000)
 	MaxLinesPerFile int           // matching lines kept per file (default 100)
 	Timeout         time.Duration // default 15s
+	// Only, if non-nil, limits the search to these files: repository
+	// name -> path -> true (for code monitors).
+	Only map[string]map[string]bool
 }
 
 func (o *Options) defaults() {
@@ -199,7 +202,14 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 					return
 				}
 				j := jobs[i]
+				only := opt.Only[j.snap.repo.Name]
+				if opt.Only != nil && only == nil {
+					continue
+				}
 				s.shard(ctx, j.snap.repo, j.sh, func(id int, rel string) bool {
+					if opt.Only != nil && !only[rel] {
+						return true
+					}
 					if found.Load() >= int64(opt.MaxFiles) {
 						truncated.Store(true)
 						return false

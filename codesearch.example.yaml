@@ -25,6 +25,9 @@ listen: localhost:2473
 # (run csindex yourself, e.g. from cron).
 update_interval: 10m
 
+# Where to POST (as JSON) new matches of monitored saved searches.
+# monitor_webhook: https://hooks.slack.com/services/...
+
 # Rank recently modified files slightly higher in search results.
 # rank_recent: true
 
