@@ -216,6 +216,7 @@ CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
 | `is:test` | Test files; also `is:generated` (by path, or a "Code generated … DO NOT EDIT" / `@generated` marker) and `is:vendored` (`third_party/`, `external/`, `vendor/`, `node_modules/`, …). `-is:test` excludes them. |
 | `usage:foo` | `foo` outside comments and string literals (also `code:`). |
 | `comment:foo`, `string:foo` | `foo` only inside comments, or only inside string literals. |
+| `multiline:yes` | Let patterns span lines; `.` also matches newlines (also `pcre:yes`). Example: `multiline:yes func\s\w+\(\)\s*\{\s*return\snil`. Uses Go's regexp engine on candidate files, so it is slower than normal searches. |
 | `case:yes` | Case-sensitive. Search is case-insensitive by default; `case:auto` is case-sensitive only for terms with upper-case letters. |
 
 Parentheses group only when the group contains an operator (or a parenthesis

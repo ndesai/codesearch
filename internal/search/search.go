@@ -432,6 +432,9 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 	if err != nil {
 		return nil
 	}
+	if s.q.Multiline {
+		return s.fileMultiline(r, rel, data, maxLines)
+	}
 
 	// Find each term's matching lines on demand: the expression may
 	// not need every term (for example, the second operand of a
@@ -585,7 +588,7 @@ func snippet(line []byte, terms []*Term) (string, [][2]int) {
 	line = bytes.TrimRight(line, "\r")
 	text := string(line)
 	if !utf8.ValidString(text) {
-		text = strings.ToValidUTF8(text, "�")
+		text = strings.ToValidUTF8(text, "\uFFFD")
 	}
 	var ranges [][2]int
 	for _, t := range terms {
@@ -595,8 +598,13 @@ func snippet(line []byte, terms []*Term) (string, [][2]int) {
 			}
 		}
 	}
+	return clipLine(text, ranges)
+}
+
+// clipLine merges overlapping ranges and, for a very long line, keeps a
+// window of the text around the first range.
+func clipLine(text string, ranges [][2]int) (string, [][2]int) {
 	slices.SortFunc(ranges, func(a, b [2]int) int { return a[0] - b[0] })
-	// Merge overlapping ranges.
 	var merged [][2]int
 	for _, r := range ranges {
 		if n := len(merged); n > 0 && r[0] <= merged[n-1][1] {
@@ -606,7 +614,6 @@ func snippet(line []byte, terms []*Term) (string, [][2]int) {
 		merged = append(merged, r)
 	}
 	if len(text) > maxLineLen {
-		// Keep a window around the first match.
 		start := 0
 		if len(merged) > 0 && merged[0][0] > maxLineLen/4 {
 			start = merged[0][0] - maxLineLen/4
@@ -630,6 +637,85 @@ func snippet(line []byte, terms []*Term) (string, [][2]int) {
 		merged = clipped
 	}
 	return text, merged
+}
+
+const (
+	maxMultilineMatches = 100 // per file
+	maxMatchLines       = 20  // lines shown per match
+)
+
+// fileMultiline searches one file for a multiline query, where patterns
+// may span lines. Each line of a match becomes a LineMatch with the part
+// of the match on that line highlighted.
+func (s *scanner) fileMultiline(r *Repo, rel string, data []byte, maxLines int) *FileMatch {
+	has := func(i int) bool { return s.q.AllTerms[i].Multi.Match(data) }
+	if !s.q.Match(rel, has, data) {
+		return nil
+	}
+	type span struct{ lo, hi int }
+	var spans []span
+	for i, t := range s.q.AllTerms {
+		if !s.q.IsPositive(i) {
+			continue
+		}
+		for _, m := range t.Multi.FindAllIndex(data, maxMultilineMatches) {
+			if m[1] > m[0] {
+				spans = append(spans, span{m[0], m[1]})
+			}
+		}
+	}
+	slices.SortFunc(spans, func(a, b span) int { return a.lo - b.lo })
+
+	starts := []int{0} // byte offset of each line
+	for i, c := range data {
+		if c == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	lineOf := func(off int) int { // 0-based
+		return sort.Search(len(starts), func(i int) bool { return starts[i] > off }) - 1
+	}
+	ranges := map[int][][2]int{}
+	var order []int
+	for _, sp := range spans {
+		first, last := lineOf(sp.lo), lineOf(sp.hi-1)
+		for l := first; l <= last && l < first+maxMatchLines; l++ {
+			ls := starts[l]
+			le := len(data)
+			if l+1 < len(starts) {
+				le = starts[l+1] - 1
+			}
+			a, b := max(sp.lo, ls)-ls, min(sp.hi, le)-ls
+			if _, ok := ranges[l]; !ok {
+				order = append(order, l)
+			}
+			if b > a {
+				ranges[l] = append(ranges[l], [2]int{a, b})
+			} else if ranges[l] == nil {
+				ranges[l] = [][2]int{}
+			}
+		}
+	}
+	slices.Sort(order)
+	fm := &FileMatch{Repo: r.Name, Path: rel, Lang: lang.Detect(rel).Name, NumMatches: len(spans)}
+	classifyFile(fm, data)
+	for _, l := range order {
+		if len(fm.Lines) >= maxLines {
+			break
+		}
+		le := len(data)
+		if l+1 < len(starts) {
+			le = starts[l+1] - 1
+		}
+		text := strings.TrimRight(string(data[starts[l]:le]), "\r")
+		if !utf8.ValidString(text) {
+			text = strings.ToValidUTF8(text, "\uFFFD")
+		}
+		lm := LineMatch{Line: l + 1}
+		lm.Text, lm.Ranges = clipLine(text, ranges[l])
+		fm.Lines = append(fm.Lines, lm)
+	}
+	return fm
 }
 
 // score ranks a file match; higher is better.

@@ -670,3 +670,39 @@ func TestRecencyRanking(t *testing.T) {
 		t.Errorf("boost after one half-life = %v", b)
 	}
 }
+
+func TestMultiline(t *testing.T) {
+	e := newTestEngine(t)
+	for _, tt := range []struct{ query, want string }{
+		// Function whose body starts with return.
+		{`multiline:yes func\s+\w+\(name\s+string\)\s*\*Module\s*\{\s*return`, "tools/build.go:7,8"},
+		{`pcre:yes class\s+Store\s*\{\s*count`, "web/app.ts:3,4"},
+		// Without multiline:yes, the same pattern matches nothing.
+		{`func\s+\w+\(name\s+string\)\s*\*Module\s*\{\s*return`, ""},
+		// . matches newlines.
+		{`multiline:yes struct\sRect.*?intersect file:\.h$`, "native/libs/ui/Rect.h:4,5,6"},
+		// Boolean operators still apply per file.
+		{`multiline:yes Module\s*\{\s*Name -file:test`, "tools/build.go:8"},
+		{`multiline:yes Module\s+struct\s*\{\s*Name -file:test`, "tools/build.go:3,4"},
+	} {
+		r := search(t, e, tt.query)
+		var got []string
+		for _, f := range r.Files {
+			var lines []string
+			for _, l := range f.Lines {
+				lines = append(lines, fmt.Sprint(l.Line))
+				if len(l.Ranges) == 0 {
+					t.Errorf("%q: %s:%d has no highlighted range", tt.query, f.Path, l.Line)
+				}
+			}
+			got = append(got, f.Path+":"+strings.Join(lines, ","))
+		}
+		slices.Sort(got)
+		if g := strings.Join(got, " "); g != tt.want {
+			t.Errorf("%q:\n got %s\nwant %s", tt.query, g, tt.want)
+		}
+	}
+	if _, err := ParseQuery("multiline:maybe x"); err == nil {
+		t.Error("multiline:maybe accepted")
+	}
+}

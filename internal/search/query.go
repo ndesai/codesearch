@@ -35,6 +35,7 @@ import (
 //	class:.*Impl$   definitions of types whose names match a regexp; also
 //	                function: (or func:) and symbol: (any kind), and
 //	                qualified names like Reader.Read or Rect::intersect
+//	multiline:yes   patterns may span lines; . matches newlines (also pcre:yes)
 //	is:test         test files (also is:generated, is:vendored; -is:test excludes)
 //	usage:foo       foo outside comments and string literals (also code:);
 //	                comment:foo and string:foo match only inside them
@@ -61,6 +62,8 @@ type Query struct {
 	NotRepos []*stdregexp.Regexp
 	Case     string // "yes", "auto", or "" or "no" (case-insensitive)
 	Symbol   string // sym: query
+	// Multiline lets patterns span lines (multiline:yes or pcre:yes).
+	Multiline bool
 	// SymFilters are class:, function: and symbol: filters. A query with
 	// them lists matching definitions instead of searching text.
 	SymFilters []*SymFilter
@@ -79,6 +82,7 @@ type Term struct {
 	FoldCase bool
 	Region   region            // part of the file a match must be in (usage:, comment:, string:)
 	Std      *stdregexp.Regexp // for finding match ranges within lines
+	Multi    *stdregexp.Regexp // for multiline queries: matches across lines
 	syntax   *syntax.Regexp
 }
 
@@ -269,8 +273,18 @@ func ParseQuery(s string) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	// case: affects how every term is compiled, so find it first.
+	// case: and multiline: affect how every term is compiled, so find them first.
 	for _, t := range toks {
+		if k, v, ok := strings.Cut(t.text, ":"); ok && !t.quoted && (strings.EqualFold(k, "multiline") || strings.EqualFold(k, "pcre")) {
+			switch strings.ToLower(v) {
+			case "yes", "y", "true", "1":
+				q.Multiline = true
+			case "no", "n", "false", "0":
+				q.Multiline = false
+			default:
+				return nil, fmt.Errorf("%s: must be yes or no", strings.ToLower(k))
+			}
+		}
 		if k, v, ok := strings.Cut(t.text, ":"); ok && !t.quoted && strings.EqualFold(k, "case") {
 			switch strings.ToLower(v) {
 			case "yes", "y", "true", "1", "sensitive":
@@ -300,6 +314,15 @@ func ParseQuery(s string) (*Query, error) {
 	q.Expr = expr
 	q.Simple = true
 	q.walk(expr, true, true)
+	if q.Multiline {
+		for _, t := range q.AllTerms {
+			re, err := stdregexp.Compile("(?ms)" + t.Pattern)
+			if err != nil {
+				return nil, fmt.Errorf("bad pattern %q: %v", t.Text, err)
+			}
+			t.Multi = re
+		}
+	}
 	if len(q.SymFilters) > 0 && (len(q.AllTerms) > 0 || q.Symbol != "") {
 		return nil, fmt.Errorf("class:, function: and symbol: list definitions and can't be combined with text search terms; narrow them with file:, lang: or repo:")
 	}
@@ -600,7 +623,7 @@ func (p *parser) atom(t token) (*Node, error) {
 			q.Repos = append(q.Repos, re)
 		}
 		return nil, nil
-	case "case":
+	case "case", "multiline", "pcre":
 		return nil, nil // handled in ParseQuery
 	case "sym", "def":
 		if !identRE.MatchString(val) {
@@ -739,7 +762,7 @@ func newTerm(text string, quoted bool, mode string) (*Term, error) {
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
 	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "def", "content", "c",
-		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol", "is":
+		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol", "is", "multiline", "pcre":
 		return true
 	}
 	return false
