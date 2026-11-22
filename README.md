@@ -37,6 +37,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - Click any identifier to see its definitions and references; Ctrl/⌘-click jumps
   straight to the definition. Hover over it for a card with its signature and
   doc comment.
+- Call hierarchy: the functions that call a function, and the functions it
+  calls, as an expandable tree.
 - File tree, file outline (classes, functions, methods), and find in file.
 - Links to lines and line ranges; copy the path, a link, a permalink pinned to
   the current git commit, or the raw file URL.
@@ -273,6 +275,11 @@ see its diff.
   compiler-accurate like Kythe-based cross references.
 - **Outline** comes from per-language patterns over the file's text, so it
   needs no build either.
+- **Call hierarchy** is search based too: a call is the function's name
+  followed by `(` in code (not in comments or strings) in a file of the same
+  language family, and its caller is the function whose definition precedes it
+  in that file's outline. Callees are the calls in the function's body,
+  resolved to their nearest definitions through the symbol index.
 - **Git integration** runs `git blame`, `git log` and `git show` on demand,
   with timeouts, in whichever repository contains the file.
 

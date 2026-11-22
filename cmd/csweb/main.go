@@ -119,6 +119,8 @@ func main() {
 	mux.HandleFunc("/api/suggest", s.handleSuggest)
 	mux.HandleFunc("/api/xref", s.handleXref)
 	mux.HandleFunc("/api/hover", s.handleHover)
+	mux.HandleFunc("/api/callers", s.handleCallers)
+	mux.HandleFunc("/api/callees", s.handleCallees)
 	mux.HandleFunc("/api/file", s.handleFile)
 	mux.HandleFunc("/api/blame", s.handleBlame)
 	mux.HandleFunc("/api/history", s.handleHistory)

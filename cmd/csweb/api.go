@@ -714,3 +714,41 @@ func (s *server) handleHover(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"symbol": res.Symbol, "total": res.Total, "defs": defs})
 }
+
+// handleCallers returns the functions calling a symbol, for the call hierarchy.
+func (s *server) handleCallers(w http.ResponseWriter, r *http.Request) {
+	res, err := s.engine.Callers(r.Context(), r.FormValue("sym"), r.FormValue("repo"), r.FormValue("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	type apiCall struct {
+		Line int    `json:"line"`
+		HTML string `json:"html"`
+	}
+	type apiCaller struct {
+		*search.Caller
+		Calls []apiCall `json:"calls"`
+	}
+	out := []apiCaller{}
+	for _, c := range res.Callers {
+		lx := lang.Detect(c.Path).Lexer
+		ac := apiCaller{Caller: c}
+		for _, cs := range c.Calls {
+			ac.Calls = append(ac.Calls, apiCall{cs.Line, highlightSnippet(lx, cs.Text, cs.Ranges)})
+		}
+		out = append(out, ac)
+	}
+	writeJSON(w, map[string]any{"symbol": res.Symbol, "callers": out, "numCalls": res.NumCalls, "truncated": res.Truncated, "elapsed": res.Elapsed})
+}
+
+// handleCallees returns the functions a function calls.
+func (s *server) handleCallees(w http.ResponseWriter, r *http.Request) {
+	line, _ := strconv.Atoi(r.FormValue("line"))
+	res, err := s.engine.Callees(r.Context(), r.FormValue("sym"), r.FormValue("repo"), r.FormValue("path"), line)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, res)
+}

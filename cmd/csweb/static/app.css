@@ -438,3 +438,22 @@ mark.ff.cur { background: var(--mark-cur); }
 .tbtn .tico { width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; margin-right: 4px; }
 .suggest li.scope { border-top: 0; margin-top: 0; padding-top: 6px; border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; padding-bottom: 8px; }
 .suggest li.scope .ico { width: 15px; height: 15px; }
+
+/* ---- call hierarchy ---- */
+.xref-head .grow { flex: 1; }
+.xref-head .iconbtn { margin-left: 0; }
+.ctree { list-style: none; margin: 0; padding: 0 0 0 4px; }
+.ctree .ctree { padding-left: 22px; }
+.xref-body > .ctree { padding: 6px 8px 12px; }
+.cnode { display: flex; align-items: center; gap: 7px; padding: 3px 6px; border-radius: 6px; font-size: 13px; white-space: nowrap; }
+.cnode:hover { background: var(--bg-hover); }
+.cnode .cname { font: 500 13px var(--mono); }
+.cnode .cloc { color: var(--text-3); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; }
+.ctw { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); cursor: pointer; transition: transform .1s; }
+.ctw svg { width: 12px; height: 12px; fill: currentColor; }
+.ctw.none { cursor: default; }
+li.open > .cnode .ctw { transform: rotate(90deg); }
+li.unresolved .cname { color: var(--text-2); }
+.ckids { padding-left: 22px; }
+.csites { margin: 2px 0 4px; border: 1px solid var(--border-soft); border-radius: 6px; }
+.cload, .cnone { padding: 6px 10px; font-size: 13px; display: flex; gap: 8px; align-items: center; }

@@ -1104,8 +1104,12 @@ function renderXref(panel, x) {
   head.innerHTML = `<span class="sym">${esc(r.symbol)}</span>
     <span class="counts">${nd} definition${nd === 1 ? '' : 's'} · ${fmtNum(r.numRefs)} reference${r.numRefs === 1 ? '' : 's'} in ${fmtNum(r.numFiles)} file${r.numFiles === 1 ? '' : 's'}${r.truncated ? ' (partial)' : ''} · ${r.elapsed.toFixed(2)} s</span>
     <a href="${searchURL('\\b' + r.symbol + '\\b case:yes')}" style="font-size:12px;margin-left:8px">Search</a>
+    <span class="grow"></span>
+    <button class="tbtn" data-calls="callers" title="Functions that call ${esc(r.symbol)}">Callers</button>
+    <button class="tbtn" data-calls="callees" title="Functions ${esc(r.symbol)} calls"${nd ? '' : ' disabled'}>Callees</button>
     <button class="iconbtn" title="Close (Esc)">✕</button>`;
-  $('button', head).onclick = closePanel;
+  $('.iconbtn', head).onclick = closePanel;
+  $$('[data-calls]', head).forEach(b => b.onclick = () => showCalls(r.symbol, b.dataset.calls, x));
   let html = '';
   if (nd) {
     html += '<h4>Definitions</h4><div class="fr defs"><table class="snip">' + r.defs.map(d => {
@@ -1131,12 +1135,13 @@ function renderXref(panel, x) {
 function restorePanel() {
   const p = view.panel;
   if (!p) return;
-  if (p.kind !== 'xref' && (p.repo !== view.repo || p.path !== view.path)) { closePanel(); return; }
+  if (p.kind !== 'xref' && p.kind !== 'calls' && (p.repo !== view.repo || p.path !== view.path)) { closePanel(); return; }
   const panel = ensurePanel();
   if (!panel) return;
   if (p.kind === 'xref') { renderXref(panel, p); highlightSym(p.sym); }
   else if (p.kind === 'history') renderHistory(panel, p);
   else if (p.kind === 'commit') renderCommit(panel, p);
+  else if (p.kind === 'calls') renderCalls(panel, p);
 }
 
 function closePanel() {
@@ -1579,6 +1584,110 @@ async function renderSnippet(fr, q) {
     prev = c.line;
   }
   table.innerHTML = out;
+}
+
+// ---- call hierarchy ----
+
+// showCalls opens the call hierarchy for sym, from the cross reference
+// panel x: callers of sym, or the functions its definition calls.
+function showCalls(sym, mode, x) {
+  const panel = ensurePanel();
+  if (!panel) return;
+  const from = x.from || {repo: view.repo, path: view.path};
+  const def = (x.data.defs || [])[0];
+  view.panel = {kind: 'calls', sym, mode, from, def, xref: x};
+  renderCalls(panel, view.panel);
+}
+
+function renderCalls(panel, p) {
+  const head = $('.xref-head', panel), body = $('.xref-body', panel);
+  head.innerHTML = `<button class="tbtn" data-back="1" title="Back to definitions and references">← References</button>
+    <span class="sym">${p.mode === 'callers' ? 'Callers of' : 'Calls from'} ${esc(p.sym)}</span>
+    <span class="counts"></span><span class="grow"></span>
+    <button class="tbtn${p.mode === 'callers' ? ' on' : ''}" data-mode="callers">Callers</button>
+    <button class="tbtn${p.mode === 'callees' ? ' on' : ''}" data-mode="callees"${p.def ? '' : ' disabled'}>Callees</button>
+    <button class="iconbtn" title="Close (Esc)">✕</button>`;
+  $('.iconbtn', head).onclick = closePanel;
+  $('[data-back]', head).onclick = () => { view.panel = p.xref; renderXref(panel, p.xref); };
+  $$('[data-mode]', head).forEach(b => b.onclick = () => { p.mode = b.dataset.mode; renderCalls(panel, p); });
+  body.innerHTML = '<ul class="ctree"></ul>';
+  const root = $('.ctree', body);
+  const node = p.mode === 'callers'
+    ? {sym: p.sym, repo: p.from.repo, path: p.from.path}
+    : {sym: p.sym, repo: p.def.repo, path: p.def.path, line: p.def.line};
+  loadCallLevel(root, p.mode, node, $('.counts', head));
+  body.onclick = e => {
+    const tw = e.target.closest('.ctw');
+    if (tw) { toggleCallNode(tw.closest('li'), p.mode); return; }
+    const row = e.target.closest('tr.row');
+    if (row && !e.target.closest('a') && !window.getSelection().toString()) navigate(row.dataset.href);
+  };
+}
+
+const bareName = n => n.slice(Math.max(n.lastIndexOf('.'), n.lastIndexOf(':')) + 1);
+
+// loadCallLevel fills ul with the callers (or callees) of node.
+async function loadCallLevel(ul, mode, node, counts) {
+  ul.innerHTML = '<li class="muted cload"><span class="spinner"></span> Loading…</li>';
+  let r;
+  try {
+    r = mode === 'callers'
+      ? await api('callers', {sym: node.sym, repo: node.repo, path: node.path})
+      : await api('callees', {sym: node.sym, repo: node.repo, path: node.path, line: node.line || 0});
+  } catch (e) {
+    ul.innerHTML = `<li class="error">${esc(e.message)}</li>`;
+    return;
+  }
+  const items = mode === 'callers' ? r.callers : r.callees;
+  if (counts) {
+    counts.textContent = mode === 'callers'
+      ? `${fmtNum(r.numCalls)} call${r.numCalls === 1 ? '' : 's'} in ${fmtNum(items.length)} function${items.length === 1 ? '' : 's'}${r.truncated ? ' (partial)' : ''} · ${r.elapsed.toFixed(2)} s`
+      : `${fmtNum(items.length)} function${items.length === 1 ? '' : 's'} called`;
+  }
+  if (!items.length) {
+    ul.innerHTML = `<li class="muted cnone">${mode === 'callers' ? 'No calls found.' : 'No calls found in this function.'}</li>`;
+    return;
+  }
+  ul.innerHTML = items.map((c, i) => mode === 'callers' ? callerHTML(c, i) : calleeHTML(c, node, i)).join('');
+  Array.from(ul.children).forEach((li, i) => li._item = items[i]);
+}
+
+function callerHTML(c, i) {
+  const k = kindLetter[c.kind] || 'f';
+  const name = c.name || '(top level)';
+  const href = fileURL(c.repo, c.path, {line: c.line || (c.calls[0] && c.calls[0].line)});
+  return `<li><div class="cnode"><span class="ctw" title="Show call sites and callers">${icons.chevron}</span>
+    <span class="okind k-${esc(c.kind || 'func')}">${esc(k)}</span>
+    <a href="${esc(href)}" class="cname">${esc(name)}</a>
+    <span class="cloc" title="${esc(c.repo + ': ' + c.path)}">${esc(c.path)}${c.line ? ':' + c.line : ''} · ${c.calls.length} call${c.calls.length === 1 ? '' : 's'}</span></div>
+    <div class="ckids" hidden></div></li>`;
+}
+
+function calleeHTML(c, node, i) {
+  const resolved = !!c.path;
+  const href = resolved ? fileURL(c.repo, c.path, {line: c.defLine}) : fileURL(node.repo, node.path, {line: c.line});
+  return `<li${resolved ? '' : ' class="unresolved"'}><div class="cnode">${resolved ? `<span class="ctw" title="Show what it calls">${icons.chevron}</span>` : '<span class="ctw none"></span>'}
+    <span class="okind k-${esc(c.kind || 'func')}">${esc(kindLetter[c.kind] || 'f')}</span>
+    <a href="${esc(href)}" class="cname">${esc(c.name)}</a>
+    <span class="cloc">${resolved ? esc(c.path) + ':' + c.defLine : 'definition not indexed'}${c.count > 1 ? ' · ' + c.count + ' calls' : ''}</span></div>
+    <div class="ckids" hidden></div></li>`;
+}
+
+async function toggleCallNode(li, mode) {
+  const kids = $(':scope > .ckids', li);
+  li.classList.toggle('open');
+  kids.hidden = !li.classList.contains('open');
+  if (kids.hidden || kids.dataset.loaded) return;
+  kids.dataset.loaded = '1';
+  const c = li._item;
+  if (mode === 'callers') {
+    const f = {repo: c.repo, path: c.path, lines: c.calls.map(s => ({line: s.line, html: s.html}))};
+    kids.innerHTML = `<table class="snip csites">${snippetRows(f, f.lines, '')}</table>` + (c.name ? '<ul class="ctree"></ul>' : '');
+    if (c.name) loadCallLevel($('ul', kids), mode, {sym: bareName(c.name), repo: c.repo, path: c.path});
+  } else {
+    kids.innerHTML = '<ul class="ctree"></ul>';
+    loadCallLevel($('ul', kids), mode, {sym: c.name, repo: c.repo, path: c.path, line: c.defLine});
+  }
 }
 
 // ---- keyboard ----
