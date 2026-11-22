@@ -35,6 +35,7 @@ import (
 //	class:.*Impl$   definitions of types whose names match a regexp; also
 //	                function: (or func:) and symbol: (any kind), and
 //	                qualified names like Reader.Read or Rect::intersect
+//	is:test         test files (also is:generated, is:vendored; -is:test excludes)
 //	usage:foo       foo outside comments and string literals (also code:);
 //	                comment:foo and string:foo match only inside them
 //
@@ -66,7 +67,8 @@ type Query struct {
 	// Simple reports whether Expr is a conjunction without OR or NOT.
 	Simple bool
 
-	positive []bool // positive[i] reports whether AllTerms[i] is in Terms
+	positive     []bool // positive[i] reports whether AllTerms[i] is in Terms
+	needsContent bool   // an is:generated filter needs file contents
 }
 
 // A Term is one content pattern.
@@ -100,6 +102,7 @@ const (
 	OpTerm // content term AllTerms[Term]
 	OpFile // path matches File
 	OpLang // path is in language Lang
+	OpIs   // file is in category Is: "test", "generated" or "vendored"
 )
 
 // A Node is a query expression.
@@ -109,6 +112,7 @@ type Node struct {
 	Term int
 	File *stdregexp.Regexp
 	Lang *lang.Filter
+	Is   string
 }
 
 // tri is a three-valued truth value, used to evaluate path filters
@@ -121,12 +125,15 @@ const (
 	tUnknown
 )
 
-func (n *Node) eval(path string, term func(int) tri) tri {
+// eval evaluates the expression for a file. term reports whether a
+// content term occurs in the file; generated whether the file's content
+// marks it as generated (tUnknown if the content was not read).
+func (n *Node) eval(path string, term func(int) tri, generated func() tri) tri {
 	switch n.Op {
 	case OpAnd:
 		v := tTrue
 		for _, k := range n.Kids {
-			switch k.eval(path, term) {
+			switch k.eval(path, term, generated) {
 			case tFalse:
 				return tFalse
 			case tUnknown:
@@ -137,7 +144,7 @@ func (n *Node) eval(path string, term func(int) tri) tri {
 	case OpOr:
 		v := tFalse
 		for _, k := range n.Kids {
-			switch k.eval(path, term) {
+			switch k.eval(path, term, generated) {
 			case tTrue:
 				return tTrue
 			case tUnknown:
@@ -146,7 +153,7 @@ func (n *Node) eval(path string, term func(int) tri) tri {
 		}
 		return v
 	case OpNot:
-		switch n.Kids[0].eval(path, term) {
+		switch n.Kids[0].eval(path, term, generated) {
 		case tTrue:
 			return tFalse
 		case tFalse:
@@ -156,18 +163,33 @@ func (n *Node) eval(path string, term func(int) tri) tri {
 	case OpTerm:
 		return term(n.Term)
 	case OpFile:
-		if n.File.MatchString(path) {
-			return tTrue
-		}
-		return tFalse
+		return triOf(n.File.MatchString(path))
 	case OpLang:
-		if n.Lang.Match(path) {
-			return tTrue
+		return triOf(n.Lang.Match(path))
+	case OpIs:
+		switch n.Is {
+		case "test":
+			return triOf(isTestPath(path))
+		case "vendored":
+			return triOf(isVendoredPath(path))
+		case "generated":
+			if isGeneratedPath(path) {
+				return tTrue
+			}
+			return generated()
 		}
-		return tFalse
 	}
 	return tUnknown
 }
+
+func triOf(b bool) tri {
+	if b {
+		return tTrue
+	}
+	return tFalse
+}
+
+func unknown() tri { return tUnknown }
 
 // PathMatch reports whether a file with the given path could match the
 // query, considering only the path filters.
@@ -175,22 +197,24 @@ func (q *Query) PathMatch(path string) bool {
 	if q.Expr == nil {
 		return true
 	}
-	return q.Expr.eval(path, func(int) tri { return tUnknown }) != tFalse
+	return q.Expr.eval(path, func(int) tri { return tUnknown }, unknown) != tFalse
 }
 
-// Match reports whether a file matches, given which content terms
-// occur in it (has(i) for AllTerms[i]).
-func (q *Query) Match(path string, has func(i int) bool) bool {
+// Match reports whether a file matches, given which content terms occur
+// in it (has(i) for AllTerms[i]) and the start of its content (for
+// is:generated; nil if not read, which then counts as not generated).
+func (q *Query) Match(path string, has func(i int) bool, head []byte) bool {
 	if q.Expr == nil {
 		return true
 	}
-	return q.Expr.eval(path, func(i int) tri {
-		if has(i) {
-			return tTrue
-		}
-		return tFalse
+	return q.Expr.eval(path, func(i int) tri { return triOf(has(i)) }, func() tri {
+		return triOf(head != nil && isGeneratedContent(head))
 	}) == tTrue
 }
+
+// NeedsContent reports whether matching a file requires reading it even
+// without content terms (for is:generated).
+func (q *Query) NeedsContent() bool { return q.needsContent }
 
 // IsPositive reports whether AllTerms[i] is one of q.Terms.
 func (q *Query) IsPositive(i int) bool { return q.positive[i] }
@@ -590,6 +614,16 @@ func (p *parser) atom(t token) (*Node, error) {
 			return nil, err
 		}
 		return wrap(q.leaf(term))
+	case "is":
+		kind, ok := map[string]string{"test": "test", "tests": "test", "generated": "generated", "gen": "generated",
+			"vendored": "vendored", "vendor": "vendored", "third_party": "vendored", "thirdparty": "vendored"}[strings.ToLower(val)]
+		if !ok {
+			return nil, fmt.Errorf("is: must be test, generated or vendored")
+		}
+		if kind == "generated" {
+			q.needsContent = true
+		}
+		return wrap(&Node{Op: OpIs, Is: kind})
 	case "class", "function", "func", "symbol":
 		if neg {
 			return nil, fmt.Errorf("-%s: is not supported", key)
@@ -705,7 +739,7 @@ func newTerm(text string, quoted bool, mode string) (*Term, error) {
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
 	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "def", "content", "c",
-		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol":
+		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol", "is":
 		return true
 	}
 	return false

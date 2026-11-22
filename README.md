@@ -19,11 +19,13 @@ tools and adds a configurable incremental indexer and a full web app.
   trigram index so that queries over a million files take a fraction of a second.
 - Google Code Search–style queries: `file:`, `lang:`, `repo:`, `sym:`, `case:`,
   `-term`, `OR`, `NOT`, and `( )` grouping; path globs like `file:src/**/*.kt`;
-  `usage:`, `comment:` and `string:` to match only in code, comments or strings.
+  `usage:`, `comment:` and `string:` to match only in code, comments or strings;
+  `is:test`, `is:generated` and `is:vendored` to include or exclude those files.
 - Search is case-insensitive by default (`case:yes` for exact case).
 - File and folder name matches, plus suggestions as you type.
 - Results ranked with definitions first (using a symbol index built while
-  indexing), and a sidebar to narrow by repository, language and directory.
+  indexing), and a sidebar to narrow by repository, language and directory, or
+  hide tests, generated and third-party code.
 - Expand any result in place to see the lines around each match.
 - Saved searches (shared across your devices) and per-browser history of
   searches and recently viewed files.
@@ -208,6 +210,7 @@ CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
 | `content:file` | Search contents only, even for a word that looks like a filter (also `c:`). |
 | `sym:Activity` | Definitions of a symbol. |
 | `class:.*Impl$` | Type definitions (class, struct, interface, enum, …) whose names match a regular expression. `function:` (or `func:`) lists functions and methods, `symbol:` any kind. Qualified names work too: `function:Reader.Read`, `func:Rect::intersect`. Combine with `file:`, `lang:` and `repo:`, or with each other using `OR`. |
+| `is:test` | Test files; also `is:generated` (by path, or a "Code generated … DO NOT EDIT" / `@generated` marker) and `is:vendored` (`third_party/`, `external/`, `vendor/`, `node_modules/`, …). `-is:test` excludes them. |
 | `usage:foo` | `foo` outside comments and string literals (also `code:`). |
 | `comment:foo`, `string:foo` | `foo` only inside comments, or only inside string literals. |
 | `case:yes` | Case-sensitive. Search is case-insensitive by default; `case:auto` is case-sensitive only for terms with upper-case letters. |

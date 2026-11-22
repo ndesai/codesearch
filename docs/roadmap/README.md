@@ -7,7 +7,7 @@ Each file describes the problem, the proposal and the acceptance criteria.
 - [x] [2. Hover cards with the definition and doc comment of an identifier](02-hover-cards-with-the-definition-and-doc-comment-of-an-identi.md)
 - [x] [3. usage:, comment: and string: search filters](03-usage-comment-and-string-search-filters.md)
 - [x] [4. Typed symbol filters: class:, function: and symbol: with regular expressions](04-typed-symbol-filters-class-function-and-symbol-with-regular-.md)
-- [ ] [5. is:test, is:generated and is:vendored filters](05-is-test-is-generated-and-is-vendored-filters.md)
+- [x] [5. is:test, is:generated and is:vendored filters](05-is-test-is-generated-and-is-vendored-filters.md)
 - [ ] [6. Search within the current directory](06-search-within-the-current-directory.md)
 - [ ] [7. Recency-aware ranking](07-recency-aware-ranking.md)
 - [ ] [8. Multi-line search (pcre:yes)](08-multi-line-search-pcre-yes.md)

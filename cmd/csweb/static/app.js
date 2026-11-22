@@ -359,8 +359,18 @@ function facetsHTML(fs, q) {
       return `<a class="facet${on ? ' on' : ''}" href="${searchURL(toggleFilter(q, f.filter))}" title="${esc(on ? 'Remove ' : 'Add ') + esc(f.filter)}"><span class="fl">${on ? '✓ ' : ''}${fmt(f.label)}</span><span class="fc">${fmtNum(f.count)}</span></a>`;
     }).join('') + '</div>';
   };
+  // Categories are hidden with -is:..., and shown as long as they are present
+  // (or hidden by the query).
+  const kinds = (fs.kinds || []).slice();
+  for (const [label, filter] of [['Tests', '-is:test'], ['Generated', '-is:generated'], ['Third-party', '-is:vendored']]) {
+    if (hasFilter(q, filter) && !kinds.some(k => k.filter === filter)) kinds.push({label, filter, count: 0});
+  }
+  const hide = kinds.length ? `<div class="fsec"><div class="ftitle">Hide</div>` + kinds.map(k => {
+    const on = hasFilter(q, k.filter);
+    return `<a class="facet${on ? ' on' : ''}" href="${searchURL(toggleFilter(q, k.filter))}" title="${on ? 'Show' : 'Hide'} ${esc(k.label.toLowerCase())} (${esc(k.filter)})"><span class="fl">${on ? '✓ ' : ''}${esc(k.label)}</span><span class="fc">${on ? '' : fmtNum(k.count)}</span></a>`;
+  }).join('') + '</div>' : '';
   return section('Repositories', fs.repos, esc) + section('Languages', fs.langs, esc) +
-    section('Directories', fs.dirs, l => `<span class="mono">${esc(l)}</span>`);
+    section('Directories', fs.dirs, l => `<span class="mono">${esc(l)}</span>`) + hide;
 }
 
 function appendResults(r, q) {

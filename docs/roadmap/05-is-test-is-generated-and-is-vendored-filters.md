@@ -16,3 +16,14 @@ Share the classification with the existing ranking penalties so the two never di
 ## Acceptance criteria
 - `NewReader -is:test` excludes `*_test.go` files.
 - The content-based "generated" check reads only the first few lines of candidate files.
+
+## Status: done
+
+- `is:test`, `is:generated`, `is:vendored` (aliases `tests`, `gen`, `vendor`,
+  `third_party`), negatable with `-is:` or `NOT is:`, usable inside `OR` and
+  groups. Classification lives in `internal/search/kinds.go` and is shared with
+  ranking, which demotes the same files.
+- Generated files are recognized by path or by a marker in the first 1 KB
+  (only read when an `is:generated` filter needs it and no text term already
+  read the file).
+- The filter sidebar has a "Hide" section with counts for each category present.

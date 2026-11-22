@@ -7,6 +7,7 @@ package search
 import (
 	"bytes"
 	"context"
+	"io"
 	"math"
 	"os"
 	"path"
@@ -69,6 +70,9 @@ type Facets struct {
 	Repos []Facet `json:"repos"`
 	Langs []Facet `json:"langs"`
 	Dirs  []Facet `json:"dirs"`
+	// Kinds counts tests, generated and third-party files, with filters
+	// that exclude them.
+	Kinds []Facet `json:"kinds,omitempty"`
 }
 
 // A Facet is one value of an attribute, with the query filter that
@@ -87,6 +91,20 @@ type FileMatch struct {
 	Lines      []LineMatch `json:"lines"`
 	NumMatches int         `json:"numMatches"`
 	Score      float64     `json:"-"`
+
+	test, generated, vendored bool // file categories (see classifyFile)
+}
+
+// readHead returns up to n bytes from the start of the named file.
+func readHead(name string, n int) []byte {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	k, _ := io.ReadFull(f, buf)
+	return buf[:k]
 }
 
 // A LineMatch is one matching line.
@@ -387,10 +405,16 @@ func eachLine(re *regexp.Regexp, data []byte, fn func(lo, hi int) bool) {
 // file searches one file, returning nil if it does not match.
 func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch {
 	if len(s.terms) == 0 {
-		if !s.q.Match(rel, nil) {
+		var head []byte
+		if s.q.NeedsContent() {
+			head = readHead(r.Root+string(os.PathSeparator)+filepathFromSlash(rel), generatedHeadLen)
+		}
+		if !s.q.Match(rel, nil, head) {
 			return nil
 		}
-		return &FileMatch{Repo: r.Name, Path: rel, Lang: lang.Detect(rel).Name}
+		fm := &FileMatch{Repo: r.Name, Path: rel, Lang: lang.Detect(rel).Name}
+		classifyFile(fm, head)
+		return fm
 	}
 	data, err := os.ReadFile(r.Root + string(os.PathSeparator) + filepathFromSlash(rel))
 	if err != nil {
@@ -471,7 +495,7 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 		}
 		return state[i] >= present
 	}
-	if !s.q.Match(rel, has) {
+	if !s.q.Match(rel, has, data) {
 		return nil
 	}
 	// Show lines for every positive term present, including any the
@@ -498,6 +522,7 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 
 	l := lang.Detect(rel)
 	fm := &FileMatch{Repo: r.Name, Path: rel, Lang: l.Name, NumMatches: count}
+	classifyFile(fm, data)
 	lineno, pos := 1, 0
 	for _, h := range hits {
 		lineno += bytes.Count(data[pos:h.lo], nl)
@@ -618,17 +643,20 @@ func score(f *FileMatch, q *Query) float64 {
 	}
 	sc += math.Min(math.Log2(1+float64(f.NumMatches)), 5)
 
+	// Demote tests, generated and third-party code (the is: categories),
+	// and a few other usually less interesting places.
 	p := "/" + strings.ToLower(f.Path)
-	for _, w := range []string{"/test/", "/tests/", "/testing/", "/testdata/", "_test.", "test.java", "tests.java", "test.kt", ".test.", ".spec.", "/mock", "fake", "/benchmark"} {
-		if strings.Contains(p, w) {
-			sc -= 6
-			break
-		}
-	}
-	for _, w := range []string{"/third_party/", "/external/", "/vendor/", "/prebuilts/", "/node_modules/", "/generated/", "/gen/", "/out/", "/build/", "/dist/", ".pb.", "_pb2.", ".generated."} {
-		if strings.Contains(p, w) {
-			sc -= 4
-			break
+	switch {
+	case f.test:
+		sc -= 6
+	case f.generated || f.vendored:
+		sc -= 4
+	default:
+		for _, w := range []string{"/mock", "fake", "/benchmark", "/out/", "/build/", "/dist/"} {
+			if strings.Contains(p, w) {
+				sc -= 3
+				break
+			}
 		}
 	}
 	sc -= 0.25 * float64(strings.Count(f.Path, "/"))
@@ -790,6 +818,26 @@ func facets(files []*FileMatch) *Facets {
 	f := &Facets{
 		Repos: top(repos, func(r string) string { return "repo:^" + stdregexp.QuoteMeta(r) + "$" }),
 		Langs: top(langs, langFilter),
+	}
+	var tests, gen, vend int
+	for _, fm := range files {
+		if fm.test {
+			tests++
+		}
+		if fm.generated {
+			gen++
+		}
+		if fm.vendored {
+			vend++
+		}
+	}
+	for _, k := range []struct {
+		label, filter string
+		n             int
+	}{{"Tests", "-is:test", tests}, {"Generated", "-is:generated", gen}, {"Third-party", "-is:vendored", vend}} {
+		if k.n > 0 {
+			f.Kinds = append(f.Kinds, Facet{Label: k.label, Filter: k.filter, Count: k.n})
+		}
 	}
 
 	// Directories: group by leading path elements, descending while a

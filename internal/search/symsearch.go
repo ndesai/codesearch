@@ -137,6 +137,7 @@ func (e *Engine) symbolSearch(ctx context.Context, q *Query, opt Options) *Resul
 		fm := byFile[key]
 		if fm == nil {
 			fm = &FileMatch{Repo: h.repo.Name, Path: h.Path, Lang: lang.Detect(h.Path).Name}
+			classifyFile(fm, nil)
 			byFile[key] = fm
 			order = append(order, key)
 			best[key] = h.rank
