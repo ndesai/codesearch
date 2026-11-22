@@ -21,6 +21,7 @@ import (
 	"github.com/ndesai/codesearch/index"
 	"github.com/ndesai/codesearch/internal/config"
 	"github.com/ndesai/codesearch/internal/indexer"
+	"github.com/ndesai/codesearch/internal/scip"
 	"github.com/ndesai/codesearch/internal/symbols"
 )
 
@@ -49,6 +50,52 @@ type Repo struct {
 	modTime time.Time
 	size    int64
 	err     error
+
+	scipMu    sync.Mutex
+	scipIndex *scip.Index // precise code intelligence, if configured
+	scipStamp time.Time   // newest .scip modification time loaded
+}
+
+// SCIPIndex returns the repository's SCIP index, or nil.
+func (r *Repo) SCIPIndex() *scip.Index {
+	r.scipMu.Lock()
+	defer r.scipMu.Unlock()
+	return r.scipIndex
+}
+
+// refreshSCIP (re)loads the configured SCIP index if it changed.
+func (r *Repo) refreshSCIP() {
+	p := r.cfg.SCIP
+	if p == "" {
+		return
+	}
+	stamp := time.Time{}
+	if st, err := os.Stat(p); err == nil {
+		stamp = st.ModTime()
+		if st.IsDir() {
+			ents, _ := os.ReadDir(p)
+			for _, e := range ents {
+				if info, err := e.Info(); err == nil && info.ModTime().After(stamp) {
+					stamp = info.ModTime()
+				}
+			}
+		}
+	}
+	r.scipMu.Lock()
+	same := !stamp.IsZero() && stamp.Equal(r.scipStamp)
+	r.scipMu.Unlock()
+	if same {
+		return
+	}
+	idx, err := scip.Load(p, r.Root)
+	if err != nil {
+		r.setErr(fmt.Errorf("loading SCIP index: %v", err))
+		return
+	}
+	r.scipMu.Lock()
+	r.scipIndex, r.scipStamp = idx, stamp
+	r.scipMu.Unlock()
+	log.Printf("%s: loaded SCIP index %s (%d documents)", r.Name, p, len(idx.Docs))
 }
 
 // A snapshot is an immutable set of open shards for one repo.
@@ -98,6 +145,7 @@ func (e *Engine) Repos() []*Repo { return e.repos }
 // Refresh reloads any repository whose manifest has changed.
 func (e *Engine) Refresh() {
 	for _, r := range e.repos {
+		r.refreshSCIP()
 		if changed := r.refresh(e.cfg); len(changed) > 0 && e.OnUpdate != nil {
 			go e.OnUpdate(r.Name, changed)
 		}

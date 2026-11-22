@@ -1180,7 +1180,7 @@ async function showXref(sym, repo, path, line, jump) {
   panelLoading(panel, esc(sym));
   let r;
   try {
-    r = await api('xref', {sym, repo, path}, 'xref');
+    r = await api('xref', line ? {sym, repo, path, line} : {sym, repo, path}, 'xref');
   } catch (e) {
     if (isAbort(e)) return;
     body.innerHTML = `<div class="error">${esc(e.message)}</div>`;
@@ -1202,7 +1202,8 @@ async function showXref(sym, repo, path, line, jump) {
 function renderXref(panel, x) {
   const r = x.data, head = $('.xref-head', panel), body = $('.xref-body', panel);
   const nd = (r.defs || []).length;
-  head.innerHTML = `<span class="sym">${esc(r.symbol)}</span>
+  const precise = r.precise ? `<span class="precise" title="From the repository's SCIP index: compiler-accurate${r.stale ? `; ${r.stale} file${r.stale === 1 ? '' : 's'} changed since the index was built ${r.stale === 1 ? 'is' : 'are'} not included` : ''}">✓ Precise${r.stale ? ` · ${r.stale} stale` : ''}</span>` : '';
+  head.innerHTML = `<span class="sym">${esc(r.symbol)}</span>${precise}
     <span class="counts">${nd} definition${nd === 1 ? '' : 's'} · ${fmtNum(r.numRefs)} reference${r.numRefs === 1 ? '' : 's'} in ${fmtNum(r.numFiles)} file${r.numFiles === 1 ? '' : 's'}${r.truncated ? ' (partial)' : ''} · ${r.elapsed.toFixed(2)} s</span>
     <a href="${searchURL('\\b' + r.symbol + '\\b case:yes')}" style="font-size:12px;margin-left:8px">Search</a>
     <span class="grow"></span>

@@ -199,6 +199,11 @@ type XrefResult struct {
 	NumFiles  int          `json:"numFiles"`
 	Truncated bool         `json:"truncated,omitempty"`
 	Elapsed   float64      `json:"elapsed"`
+	// Precise reports that the result comes from a SCIP index rather
+	// than search; StaleFiles counts files left out because they changed
+	// since that index was built.
+	Precise    bool `json:"precise,omitempty"`
+	StaleFiles int  `json:"staleFiles,omitempty"`
 }
 
 // A Location is a single line in a file.

@@ -179,7 +179,8 @@ func (s *server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleXref(w http.ResponseWriter, r *http.Request) {
 	sym := r.FormValue("sym")
-	res, err := s.engine.Xref(r.Context(), sym, r.FormValue("repo"), r.FormValue("path"))
+	line, _ := strconv.Atoi(r.FormValue("line"))
+	res, err := s.engine.XrefAt(r.Context(), sym, r.FormValue("repo"), r.FormValue("path"), line)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -202,6 +203,8 @@ func (s *server) handleXref(w http.ResponseWriter, r *http.Request) {
 		"numFiles":  res.NumFiles,
 		"truncated": res.Truncated,
 		"elapsed":   res.Elapsed,
+		"precise":   res.Precise,
+		"stale":     res.StaleFiles,
 	})
 }
 

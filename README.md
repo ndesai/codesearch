@@ -167,7 +167,7 @@ are relative to the configuration file.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `repos` | (required) | The folders to index. Each has a `path`, an optional `name` (default: the folder name, used in `repo:` queries) and optional `exclude` patterns. |
+| `repos` | (required) | The folders to index. Each has a `path`, an optional `name` (default: the folder name, used in `repo:` queries), optional `exclude` patterns, and an optional `scip` index for precise cross references (see below). |
 | `index_dir` | `~/.cache/codesearch` (macOS: `~/Library/Caches/codesearch`, Windows: `%LocalAppData%\codesearch`) | Where the index, saved searches and lock file are stored. Can also be set with `$CODESEARCH_INDEX_DIR` or `-index_dir` (see below). |
 | `listen` | `localhost:2473` | Address for `csweb`. See [Security](#security) before changing it. |
 | `update_interval` | `0` (off) | How often `csweb` re-indexes in the background, e.g. `10m`. |
@@ -187,6 +187,26 @@ file or folder name anywhere (`node_modules`, `*.min.js`); a pattern with a
 slash matches from the repository root (`/out` skips only the top-level `out`
 folder). Changing excludes, `max_file_size`, `include_hidden` or
 `use_gitignore` makes the next update rebuild that repository's index.
+
+### Precise cross references (SCIP)
+
+Cross references are search based by default. For compiler-accurate results,
+generate a [SCIP](https://github.com/sourcegraph/scip) index with your
+language's indexer (for example `scip-go`, `scip-java`, `scip-typescript`,
+`scip-python` or `scip-clang`) and point the repository at it:
+
+```yaml
+repos:
+  - path: ~/src/myproject
+    scip: ~/src/myproject/index.scip   # or a directory of .scip files
+```
+
+Clicking an identifier the index covers then lists exactly its definitions and
+references, marked **Precise** in the panel. Files changed since the index was
+written are not trusted: they are left out of precise results, and clicks in
+them use search-based cross references. `csweb` reloads the index when the file
+changes. Hover cards, the call hierarchy and the API still use search-based
+results.
 
 ### Choosing where the index is stored
 
@@ -281,7 +301,10 @@ see its diff.
   methods, build modules, ...) are extracted with per-language patterns and
   stored per shard in a name-sorted table, which `sym:` queries and cross
   references look up directly.
-- **Search-based cross references.** Clicking an identifier searches the index
+- **Precise cross references** come from SCIP indexes when configured: the
+  clicked position is looked up in the index's occurrences, so overloaded or
+  same-named symbols are told apart.
+- **Search-based cross references.** Otherwise, clicking an identifier searches the index
   for the whole word; each hit is a definition if the symbol index lists it or
   per-language heuristics recognize it (for fields, constants and the like),
   and a reference otherwise. This works for every language without building
@@ -340,7 +363,8 @@ default), or bind it only to a private network as described above.
 
 ## Limitations
 
-- Cross references and the outline are heuristic, not compiler-accurate. Expect
+- Without a SCIP index, cross references and the outline are heuristic, not
+  compiler-accurate. Expect
   the occasional missed definition, or a declaration such as a C++ forward
   declaration listed as a definition.
 - Search results stop after 2,000 matching files (the page says so); refine the

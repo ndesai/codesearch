@@ -91,6 +91,10 @@ type Repo struct {
 	Path string `yaml:"path"`
 	// Exclude lists additional glob patterns to skip in this repository.
 	Exclude []string `yaml:"exclude"`
+	// SCIP is a SCIP index file (or a directory of .scip files) with
+	// precise code intelligence for this repository, produced by tools
+	// such as scip-go, scip-java or scip-clang.
+	SCIP string `yaml:"scip"`
 
 	// Excludes is the effective exclude list (global + default + repo).
 	Excludes *Matcher `yaml:"-"`
@@ -294,6 +298,11 @@ func Parse(file string, data []byte) (*Config, error) {
 		}
 		if r.Path, err = resolve(r.Path); err != nil {
 			return nil, errorf("repos[%d]: %v", i, err)
+		}
+		if r.SCIP != "" {
+			if r.SCIP, err = resolve(r.SCIP); err != nil {
+				return nil, errorf("repos[%d] scip: %v", i, err)
+			}
 		}
 		if r.Name == "" {
 			r.Name = filepath.Base(r.Path)

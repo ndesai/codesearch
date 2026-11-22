@@ -66,6 +66,11 @@ exclude:
 repos:
   - path: ~/src/myproject
 
+  # scip: optional SCIP index for precise cross references
+  #   (from scip-go, scip-java, scip-clang, ...)
+  # - path: ~/src/service
+  #   scip: ~/src/service/index.scip
+
   - name: aosp
     path: ~/aosp
     exclude:

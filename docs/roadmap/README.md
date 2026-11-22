@@ -16,4 +16,4 @@ Each file describes the problem, the proposal and the acceptance criteria.
 - [x] [11. Search commit messages and diffs](11-search-commit-messages-and-diffs.md)
 - [x] [12. Code monitors: alerts when new code matches a saved search](12-code-monitors-alerts-when-new-code-matches-a-saved-search.md)
 - [x] [13. Documented JSON API and MCP server for AI agents](13-documented-json-api-and-mcp-server-for-ai-agents.md)
-- [ ] [14. Optional compiler-accurate cross references from SCIP indexes](14-optional-compiler-accurate-cross-references-from-scip-indexe.md)
+- [x] [14. Optional compiler-accurate cross references from SCIP indexes](14-optional-compiler-accurate-cross-references-from-scip-indexe.md)
