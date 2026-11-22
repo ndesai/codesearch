@@ -69,3 +69,21 @@ func TestRevisionTree(t *testing.T) {
 		t.Errorf("gitFile(root) rel = %q, want empty", rel)
 	}
 }
+
+func TestAnchoredPrefix(t *testing.T) {
+	for expr, want := range map[string]string{
+		"(?i)^codesearch/":         "codesearch/",
+		`^frameworks/base/core\.`:  "frameworks/base/core.",
+		"^third_party/(skia|dawn)": "third_party/",
+		"^ab*c":                    "a",
+		`(?i)\.go$`:                "!",
+	} {
+		got, ok := anchoredPrefix(expr)
+		if !ok {
+			got = "!"
+		}
+		if got != want {
+			t.Errorf("anchoredPrefix(%q) = %q, want %q", expr, got, want)
+		}
+	}
+}

@@ -469,3 +469,14 @@ li.unresolved .cname { color: var(--text-2); }
 .revlist button.cur { background: var(--bg-sel); color: var(--chip-text); }
 .revhdr { font: 500 11px var(--sans); color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; padding: 8px 16px 2px; }
 .revnone { padding: 6px 16px; font-size: 12.5px; }
+
+/* ---- history search ---- */
+.commitcard .fr-head { font-family: var(--sans); }
+.commitcard .csubj { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commitcard .croot { padding: 6px 14px 0; font: 12px var(--mono); }
+.commitcard .cfile { padding: 6px 14px 2px; font: 13px var(--mono); }
+.commitcard .cmore { padding: 4px 14px 8px; font-size: 12.5px; }
+.commitcard .snip { margin-bottom: 4px; }
+.commitcard .snip .dk { display: inline-block; width: 2ch; color: var(--text-3); user-select: none; }
+.commitcard .snip tr.d-add { background: color-mix(in srgb, #2da44e 12%, transparent); }
+.commitcard .snip tr.d-del { background: color-mix(in srgb, #cf222e 11%, transparent); }

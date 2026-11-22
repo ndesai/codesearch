@@ -49,6 +49,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - Blame: who last changed each line, and when.
 - File history that follows renames, with diffs (for the file or the whole
   commit), and any version of a file one click away.
+- Search commit messages and diffs (`type:commit`, `type:diff`) across all
+  repositories, with author and date filters.
 - Browse any branch, tag or commit: the file tree, folders and files follow the
   selected revision while you navigate (search always covers the working tree).
 - Works with nested repositories such as AOSP's `repo` checkouts.
@@ -220,6 +222,7 @@ CODESEARCH_INDEX_DIR=/mnt/fast-ssd/codesearch csindex
 | `is:test` | Test files; also `is:generated` (by path, or a "Code generated … DO NOT EDIT" / `@generated` marker) and `is:vendored` (`third_party/`, `external/`, `vendor/`, `node_modules/`, …). `-is:test` excludes them. |
 | `usage:foo` | `foo` outside comments and string literals (also `code:`). |
 | `comment:foo`, `string:foo` | `foo` only inside comments, or only inside string literals. |
+| `type:commit fix` | Search commit messages in the git history of every repository (including nested ones); `type:diff foo` searches the lines commits added or removed. Narrow with `author:`, `after:2024-01-01`, `before:`, `file:` and `repo:`. |
 | `multiline:yes` | Let patterns span lines; `.` also matches newlines (also `pcre:yes`). Example: `multiline:yes func\s\w+\(\)\s*\{\s*return\snil`. Uses Go's regexp engine on candidate files, so it is slower than normal searches. |
 | `case:yes` | Case-sensitive. Search is case-insensitive by default; `case:auto` is case-sensitive only for terms with upper-case letters. |
 

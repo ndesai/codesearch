@@ -35,6 +35,8 @@ import (
 //	class:.*Impl$   definitions of types whose names match a regexp; also
 //	                function: (or func:) and symbol: (any kind), and
 //	                qualified names like Reader.Read or Rect::intersect
+//	type:commit     search commit messages (type:diff: added and removed
+//	                lines), with author:, before:, after:, file:, repo:
 //	multiline:yes   patterns may span lines; . matches newlines (also pcre:yes)
 //	is:test         test files (also is:generated, is:vendored; -is:test excludes)
 //	usage:foo       foo outside comments and string literals (also code:);
@@ -64,6 +66,10 @@ type Query struct {
 	Symbol   string // sym: query
 	// Multiline lets patterns span lines (multiline:yes or pcre:yes).
 	Multiline bool
+	// Type is "commit" or "diff" to search git history instead of code
+	// (type:commit, type:diff), with optional author:, before: and
+	// after: filters.
+	Type, Author, Before, After string
 	// SymFilters are class:, function: and symbol: filters. A query with
 	// them lists matching definitions instead of searching text.
 	SymFilters []*SymFilter
@@ -92,8 +98,11 @@ func (t *Term) IsIdent() bool {
 }
 
 var (
-	identRE  = stdregexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
-	escapeRE = stdregexp.MustCompile(`\\[A-Za-z]`)
+	// historyValueRE limits author:, before: and after: values to
+	// characters that are safe to pass to git as an option value.
+	historyValueRE = stdregexp.MustCompile(`^[\w .:@+/-]{1,100}$`)
+	identRE        = stdregexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+	escapeRE       = stdregexp.MustCompile(`\\[A-Za-z]`)
 )
 
 // An Op is a query expression operator.
@@ -322,6 +331,19 @@ func ParseQuery(s string) (*Query, error) {
 			}
 			t.Multi = re
 		}
+	}
+	if q.Type != "" {
+		if len(q.SymFilters) > 0 || q.Symbol != "" || q.Multiline {
+			return nil, fmt.Errorf("type:%s can't be combined with class:, function:, symbol:, sym: or multiline:", q.Type)
+		}
+		if q.Type == "diff" && len(q.Terms) == 0 {
+			return nil, fmt.Errorf("type:diff needs a search term")
+		}
+		if len(q.Terms) == 0 && q.Author == "" {
+			return nil, fmt.Errorf("type:commit needs a search term or author:")
+		}
+	} else if q.Author != "" || q.Before != "" || q.After != "" {
+		return nil, fmt.Errorf("author:, before: and after: need type:commit or type:diff")
 	}
 	if len(q.SymFilters) > 0 && (len(q.AllTerms) > 0 || q.Symbol != "") {
 		return nil, fmt.Errorf("class:, function: and symbol: list definitions and can't be combined with text search terms; narrow them with file:, lang: or repo:")
@@ -637,6 +659,31 @@ func (p *parser) atom(t token) (*Node, error) {
 			return nil, err
 		}
 		return wrap(q.leaf(term))
+	case "type", "t":
+		switch strings.ToLower(val) {
+		case "commit", "commits":
+			q.Type = "commit"
+		case "diff", "diffs":
+			q.Type = "diff"
+		case "code", "file":
+			q.Type = ""
+		default:
+			return nil, fmt.Errorf("type: must be commit, diff or code")
+		}
+		return nil, nil
+	case "author", "before", "after", "since", "until":
+		if neg || strings.HasPrefix(val, "-") || !historyValueRE.MatchString(val) {
+			return nil, fmt.Errorf("invalid %s: value", key)
+		}
+		switch key {
+		case "author":
+			q.Author = val
+		case "before", "until":
+			q.Before = val
+		default:
+			q.After = val
+		}
+		return nil, nil
 	case "is":
 		kind, ok := map[string]string{"test": "test", "tests": "test", "generated": "generated", "gen": "generated",
 			"vendored": "vendored", "vendor": "vendored", "third_party": "vendored", "thirdparty": "vendored"}[strings.ToLower(val)]
@@ -762,7 +809,8 @@ func newTerm(text string, quoted bool, mode string) (*Term, error) {
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
 	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "def", "content", "c",
-		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol", "is", "multiline", "pcre":
+		"usage", "code", "comment", "string", "str", "class", "function", "func", "symbol", "is", "multiline", "pcre",
+		"type", "t", "author", "before", "after", "since", "until":
 		return true
 	}
 	return false
@@ -818,3 +866,29 @@ func tokenize(s string) ([]token, error) {
 
 // String returns a canonical form of the query, for caching.
 func (q *Query) String() string { return q.Raw }
+
+// RequiredLiteral returns the longest literal string that every match of the
+// term contains, and whether that string must be matched ignoring case.
+// It returns "" if the pattern has no such literal.
+func (t *Term) RequiredLiteral() (string, bool) {
+	best, fold := "", false
+	var walk func(re *syntax.Regexp)
+	walk = func(re *syntax.Regexp) {
+		switch re.Op {
+		case syntax.OpLiteral:
+			if s := string(re.Rune); len(s) > len(best) {
+				best, fold = s, re.Flags&syntax.FoldCase != 0
+			}
+		case syntax.OpConcat, syntax.OpCapture:
+			for _, sub := range re.Sub {
+				walk(sub)
+			}
+		case syntax.OpPlus, syntax.OpRepeat:
+			if re.Op == syntax.OpPlus || re.Min > 0 {
+				walk(re.Sub[0])
+			}
+		}
+	}
+	walk(t.syntax.Simplify())
+	return best, fold
+}

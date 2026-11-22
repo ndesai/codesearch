@@ -325,6 +325,7 @@ async function renderSearch(q) {
   if (view !== v) return;
   app.scrollTop = 0;
   recent.add('q', q);
+  if (r.type === 'commits') { renderCommits(r, q); return; }
   const parts = [];
   let summary = r.numFiles === 0 ? 'No results' :
     `<b>${fmtNum(r.numMatches)}</b> match${r.numMatches === 1 ? '' : 'es'} in <b>${fmtNum(r.numFiles)}</b> file${r.numFiles === 1 ? '' : 's'}`;
@@ -347,6 +348,34 @@ async function renderSearch(q) {
   bindSnippets($('#filelist'), q);
   appendResults(r, q);
   setupSaveButton(q);
+}
+
+// ---- history search results (type:commit, type:diff) ----
+
+function renderCommits(r, q) {
+  let summary = r.numCommits === 0 ? 'No commits found' :
+    `<b>${fmtNum(r.numCommits)}</b> commit${r.numCommits === 1 ? '' : 's'}`;
+  summary += ` in ${fmtNum(r.repos)} git repositor${r.repos === 1 ? 'y' : 'ies'} <span class="muted">(${r.elapsed.toFixed(2)} s)</span>`;
+  if (r.timedOut) summary += ' · <span class="warn">some repositories took too long; results are partial</span>';
+  else if (r.truncated) summary += ' · <span class="warn">showing the most recent results only</span>';
+  const cards = r.commits.map(c => {
+    const files = c.files.map(f => {
+      const href = fileURL(c.repo, f.path, {rev: c.hash});
+      const rows = (f.lines || []).map(l => {
+        const lhref = fileURL(c.repo, f.path, {rev: l.kind === '-' ? c.hash + '^' : c.hash, line: l.line});
+        return `<tr class="row ${l.kind === '+' ? 'd-add' : 'd-del'}" data-href="${esc(lhref)}"><td class="ln"><a href="${esc(lhref)}">${l.line}</a></td><td class="code"><span class="dk">${l.kind}</span>${l.html}</td></tr>`;
+      }).join('');
+      return `<div class="cfile"><a href="${esc(href)}">${pathHTML(f.path)}</a></div>` + (rows ? `<table class="snip">${rows}</table>` : '');
+    }).join('');
+    const more = c.numFiles > c.files.length ? `<div class="cmore muted">${c.files.length ? 'and ' : ''}${fmtNum(c.numFiles - c.files.length)} more changed file${c.numFiles - c.files.length === 1 ? '' : 's'}</div>` : '';
+    return `<div class="fr commitcard">
+      <div class="fr-head"><span class="repo-chip">${esc(c.repo)}</span><span class="csubj">${esc(c.subject)}</span>
+        <span class="meta">${esc(c.author)} · ${fmtDate(c.time)} · <a href="${fileURL(c.repo, c.root, {rev: c.hash})}" title="Browse ${esc(c.root || c.repo)} at this commit"><code>${esc(c.hash.slice(0, 10))}</code></a></span></div>
+      ${c.root ? `<div class="croot muted">${esc(c.root)}/</div>` : ''}${files}${more}</div>`;
+  }).join('');
+  app.innerHTML = `<div class="sres nofacets"><div class="results"><div class="summary"><span class="stext">${summary}</span></div><div id="filelist">${cards}</div>` +
+    (r.numCommits === 0 ? `<div class="empty">No ${r.kind === 'diff' ? 'changes' : 'commit messages'} match <code>${esc(q)}</code>.</div>` : '') + '</div></div>';
+  bindSnippets($('#filelist'), q);
 }
 
 // ---- filter sidebar ----

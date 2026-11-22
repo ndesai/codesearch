@@ -17,3 +17,20 @@ Runs `git` on demand with time and result limits, in parallel across repositorie
 - `type:commit crbug` lists matching commits with author, date and subject.
 - `type:diff writeVersion repo:codesearch` shows the hunks that added or removed `writeVersion`.
 - Slow repositories time out individually without failing the whole search.
+
+## Status: done
+
+- `type:commit` and `type:diff`, with `author:`, `before:`/`until:`,
+  `after:`/`since:`, `file:` and `repo:`, in every git work tree inside the
+  configured folders (from `.repo/project.list` when present, otherwise found by
+  scanning a few levels), cached for 10 minutes.
+- git's pattern matching is POSIX, so git only gets the longest literal of the
+  first term as a prefilter (`--grep` or `-G`, with `-i` when case-insensitive);
+  every message and changed line is then checked with the query's RE2
+  expressions, so OR, NOT and file filters work as in code search.
+- Anchored `file:^dir/` filters skip work trees outside `dir` and are passed to
+  git as pathspecs: on this machine `type:diff writeVersion file:^codesearch/`
+  went from 20 s (a shallow Chromium clone's single huge commit) to 0.5 s.
+- Up to 30 commits per work tree and 200 in total, 16 git processes at once,
+  20 s overall; work trees that time out make the result "partial" without
+  failing it. Results link to the files at each commit (via #10).
