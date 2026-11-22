@@ -9,7 +9,7 @@ Each file describes the problem, the proposal and the acceptance criteria.
 - [x] [4. Typed symbol filters: class:, function: and symbol: with regular expressions](04-typed-symbol-filters-class-function-and-symbol-with-regular-.md)
 - [x] [5. is:test, is:generated and is:vendored filters](05-is-test-is-generated-and-is-vendored-filters.md)
 - [x] [6. Search within the current directory](06-search-within-the-current-directory.md)
-- [ ] [7. Recency-aware ranking](07-recency-aware-ranking.md)
+- [x] [7. Recency-aware ranking](07-recency-aware-ranking.md)
 - [ ] [8. Multi-line search (pcre:yes)](08-multi-line-search-pcre-yes.md)
 - [ ] [9. Call hierarchy (who calls this, what does this call)](09-call-hierarchy-who-calls-this-what-does-this-call.md)
 - [ ] [10. Browse other branches, tags and commits](10-browse-other-branches-tags-and-commits.md)

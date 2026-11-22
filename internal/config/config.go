@@ -63,6 +63,9 @@ type Config struct {
 	UseDefaultExcludes *bool `yaml:"use_default_excludes"`
 	// IncludeHidden indexes files and directories whose names begin with ".".
 	IncludeHidden bool `yaml:"include_hidden"`
+	// RankRecent boosts recently modified files in search results
+	// (default true).
+	RankRecent *bool `yaml:"rank_recent"`
 	// UseGitignore skips files matched by .gitignore files and
 	// .git/info/exclude in the indexed folders (default true).
 	UseGitignore *bool `yaml:"use_gitignore"`
@@ -307,6 +310,11 @@ func Parse(file string, data []byte) (*Config, error) {
 		r.Excludes = m
 	}
 	return c, nil
+}
+
+// RecencyRanking reports whether recently modified files rank higher.
+func (c *Config) RecencyRanking() bool {
+	return c.RankRecent == nil || *c.RankRecent
 }
 
 // Gitignore reports whether .gitignore files are honored.

@@ -25,7 +25,7 @@ tools and adds a configurable incremental indexer and a full web app.
 - File and folder name matches, plus suggestions as you type.
 - Search within the folder you are browsing.
 - Results ranked with definitions first (using a symbol index built while
-  indexing), and a sidebar to narrow by repository, language and directory, or
+  indexing) and recently changed files slightly ahead, and a sidebar to narrow by repository, language and directory, or
   hide tests, generated and third-party code.
 - Expand any result in place to see the lines around each match.
 - Saved searches (shared across your devices) and per-browser history of
@@ -160,6 +160,7 @@ are relative to the configuration file.
 | `update_interval` | `0` (off) | How often `csweb` re-indexes in the background, e.g. `10m`. |
 | `exclude` | | Patterns skipped in every repository (see below). |
 | `use_default_excludes` | `true` | Skip binaries, images, archives, `node_modules`, minified files and similar. |
+| `rank_recent` | `true` | Rank recently modified files slightly higher (the boost halves every 30 days). |
 | `use_gitignore` | `true` | Skip files ignored by `.gitignore` files (at any depth) and `.git/info/exclude`. |
 | `include_hidden` | `false` | Index files and folders whose names start with `.`. |
 | `max_file_size` | `2MB` | Larger files are not indexed. |

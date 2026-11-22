@@ -7,11 +7,13 @@ package search
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ndesai/codesearch/internal/config"
 	"github.com/ndesai/codesearch/internal/indexer"
@@ -630,5 +632,41 @@ func TestRepoAbs(t *testing.T) {
 	}
 	if p, err := r.Abs("a/b"); err != nil || p != filepath.Join(r.Root, "a/b") {
 		t.Errorf("Abs(a/b) = %q, %v", p, err)
+	}
+}
+
+func TestRecencyRanking(t *testing.T) {
+	t.Setenv(config.IndexDirEnv, "")
+	root := t.TempDir()
+	now := time.Now()
+	for name, age := range map[string]time.Duration{"a/x.go": 365 * 24 * time.Hour, "b/x.go": 24 * time.Hour} {
+		p := filepath.Join(root, name)
+		os.MkdirAll(filepath.Dir(p), 0755)
+		os.WriteFile(p, []byte("package x // samething\n"), 0644)
+		os.Chtimes(p, now.Add(-age), now.Add(-age))
+	}
+	for _, recent := range []bool{true, false} {
+		yaml := fmt.Sprintf("index_dir: %s\nrank_recent: %v\nrepos:\n  - path: %s\n    name: r\n", filepath.Join(t.TempDir(), "idx"), recent, root)
+		cfg, err := config.Parse(filepath.Join(root, "c.yaml"), []byte(yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := indexer.Update(cfg, indexer.Options{Logf: t.Logf}); err != nil {
+			t.Fatal(err)
+		}
+		r := search(t, New(cfg), "samething")
+		want := "r:b/x.go r:a/x.go" // newer first
+		if !recent {
+			want = "r:a/x.go r:b/x.go" // path order
+		}
+		if got := paths(r); got != want {
+			t.Errorf("rank_recent=%v: got %s, want %s", recent, got, want)
+		}
+	}
+	if b := recencyBoost(now.UnixNano(), now.UnixNano()); b != recencyMax {
+		t.Errorf("boost for a file modified now = %v", b)
+	}
+	if b := recencyBoost(now.Add(-30*24*time.Hour).UnixNano(), now.UnixNano()); math.Abs(b-recencyMax/2) > 0.01 {
+		t.Errorf("boost after one half-life = %v", b)
 	}
 }

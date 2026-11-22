@@ -25,6 +25,9 @@ listen: localhost:2473
 # (run csindex yourself, e.g. from cron).
 update_interval: 10m
 
+# Rank recently modified files slightly higher in search results.
+# rank_recent: true
+
 # Files larger than this are not indexed (generated or data files, mostly).
 max_file_size: 2MB
 

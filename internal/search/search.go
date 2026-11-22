@@ -92,7 +92,8 @@ type FileMatch struct {
 	NumMatches int         `json:"numMatches"`
 	Score      float64     `json:"-"`
 
-	test, generated, vendored bool // file categories (see classifyFile)
+	test, generated, vendored bool  // file categories (see classifyFile)
+	mtime                     int64 // modification time (unix ns), 0 if unknown
 }
 
 // readHead returns up to n bytes from the start of the named file.
@@ -146,6 +147,12 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 			s.release()
 		}
 	}()
+	recency := e.cfg.RecencyRanking()
+	if recency {
+		for _, s := range snaps {
+			s.loadMtimes() // usually already loaded in the background
+		}
+	}
 
 	type job struct {
 		snap *snapshot
@@ -202,6 +209,7 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 					if fm == nil {
 						return true
 					}
+					fm.mtime = j.sh.mtime(id)
 					found.Add(1)
 					mu.Lock()
 					res.Files = append(res.Files, fm)
@@ -232,9 +240,13 @@ func (e *Engine) Search(ctx context.Context, q *Query, opt Options) *Result {
 	res.Candidates = int(cands.Load())
 	res.Facets = facets(res.Files)
 	res.NumFiles = len(res.Files)
+	now := time.Now().UnixNano()
 	for _, f := range res.Files {
 		res.NumMatches += f.NumMatches
 		f.Score = score(f, q)
+		if recency {
+			f.Score += recencyBoost(f.mtime, now)
+		}
 	}
 	sort.Slice(res.Files, func(i, j int) bool {
 		a, b := res.Files[i], res.Files[j]
@@ -879,4 +891,20 @@ func langFilter(name string) string {
 		return `lang:"` + strings.ReplaceAll(v, `"`, `\"`) + `"`
 	}
 	return "lang:" + v
+}
+
+// Recently modified files rank slightly higher: the boost starts at
+// recencyMax and halves every recencyHalfLife, small next to the boosts
+// for definitions and file name matches.
+const (
+	recencyMax      = 2.5
+	recencyHalfLife = 30 * 24 * time.Hour
+)
+
+func recencyBoost(mtime, now int64) float64 {
+	if mtime <= 0 {
+		return 0
+	}
+	age := max(time.Duration(now-mtime), 0)
+	return recencyMax * math.Pow(0.5, float64(age)/float64(recencyHalfLife))
 }

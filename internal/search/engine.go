@@ -53,11 +53,15 @@ type snapshot struct {
 	repo     *Repo
 	manifest *indexer.Manifest
 	shards   []*shard
+	mfile    string // manifest file, for loading modification times
+
+	mtimesOnce sync.Once
 }
 
 type shard struct {
 	file   string
 	ix     *index.Index
+	mtimes []int64        // modification time of each name, by file id (see loadMtimes)
 	syms   *symbols.Table // nil if the shard has no symbol table
 	prefix int            // length of root + separator, stripped from names
 
@@ -125,7 +129,7 @@ func (r *Repo) refresh(cfg *config.Config) {
 		r.setErr(fmt.Errorf("reading manifest: %v", err))
 		return
 	}
-	snap := &snapshot{repo: r, manifest: m}
+	snap := &snapshot{repo: r, manifest: m, mfile: mfile}
 	snap.refs.Store(1)
 	dir := indexer.RepoDir(cfg, r.Name)
 	for _, s := range m.Shards {
@@ -142,6 +146,16 @@ func (r *Repo) refresh(cfg *config.Config) {
 			sh.syms = t
 		}
 		snap.shards = append(snap.shards, sh)
+	}
+
+	if cfg.RecencyRanking() {
+		// Load modification times in the background, holding a
+		// reference so the shards stay mapped while it runs.
+		snap.refs.Add(1)
+		go func() {
+			defer snap.release()
+			snap.loadMtimes()
+		}()
 	}
 
 	r.mu.Lock()
@@ -308,4 +322,39 @@ func symbolDefs(snaps []*snapshot, name string) []SymbolDef {
 		}
 	}
 	return out
+}
+
+// loadMtimes fills in each shard's modification times from the
+// manifest, matching the manifest's sorted file list against each
+// shard's sorted names. It runs at most once per snapshot.
+func (s *snapshot) loadMtimes() {
+	s.mtimesOnce.Do(func() {
+		m, err := indexer.ReadManifest(s.mfile)
+		if err != nil || m == nil {
+			return
+		}
+		j := 0
+		for _, sh := range s.shards {
+			names := sh.nameTable()
+			mt := make([]int64, names.len())
+			for i := range mt {
+				name := index.MakePath(names.name(i))
+				for j < len(m.Files) && index.MakePath(m.Files[j].Path).Compare(name) < 0 {
+					j++
+				}
+				if j < len(m.Files) && m.Files[j].Path == names.name(i) {
+					mt[i] = m.Files[j].MTime
+				}
+			}
+			sh.mtimes = mt
+		}
+	})
+}
+
+// mtime returns the modification time of file id in the shard, or 0.
+func (sh *shard) mtime(id int) int64 {
+	if id < len(sh.mtimes) {
+		return sh.mtimes[id]
+	}
+	return 0
 }
