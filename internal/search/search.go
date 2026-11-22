@@ -407,12 +407,34 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 		collected // lines collected (found)
 	)
 	state := make([]int8, len(s.terms))
+	// For usage:, comment: and string: terms, a line counts only if a
+	// match falls in the right region of the file.
+	var spans []regionSpan
+	scanned := false
+	inRegion := func(i, lo, hi int) bool {
+		t := s.q.AllTerms[i]
+		if t.Region == regionAny {
+			return true
+		}
+		if !scanned {
+			spans, scanned = scanRegions(lang.Detect(rel).Name, data), true
+		}
+		for _, m := range t.Std.FindAllStringIndex(string(data[lo:hi]), -1) {
+			if regionAt(spans, lo+m[0]) == t.Region {
+				return true
+			}
+		}
+		return false
+	}
 	collect := func(i int) {
 		if state[i] == collected || state[i] == absent {
 			return
 		}
 		n := 0
 		eachLine(s.terms[i], data, func(lo, hi int) bool {
+			if !inRegion(i, lo, hi) {
+				return true
+			}
 			n++
 			if len(hits) < 4*maxLines {
 				hits = append(hits, hit{lo, hi, 1})
@@ -429,6 +451,15 @@ func (s *scanner) file(r *Repo, rel string, maxLines int, sym string) *FileMatch
 		if state[i] == unknown {
 			if s.q.IsPositive(i) {
 				collect(i)
+			} else if s.q.AllTerms[i].Region != regionAny {
+				state[i] = absent
+				eachLine(s.terms[i], data, func(lo, hi int) bool {
+					if inRegion(i, lo, hi) {
+						state[i] = present
+						return false
+					}
+					return true
+				})
 			} else if s.terms[i].Match(data, true, true) >= 0 {
 				state[i] = present
 			} else {

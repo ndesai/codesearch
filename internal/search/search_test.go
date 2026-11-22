@@ -431,6 +431,39 @@ func TestParseQuery(t *testing.T) {
 	}
 }
 
+func TestRegionFilters(t *testing.T) {
+	e := newTestEngine(t)
+	tests := []struct {
+		query string
+		want  string // file:lines
+	}{
+		// "NewModule" appears in a call, a definition and nowhere in comments.
+		{"usage:NewModule", "tools/build.go:7 tools/test/build_test.go:3"},
+		{"comment:namespace", "native/libs/ui/Rect.cpp:9"},
+		{"usage:namespace", "native/libs/ui/Rect.cpp:3"},
+		{`string:"Rect.cpp"`, "tools/Android.bp:3"},
+		{`usage:Rect.cpp`, ""},
+		{"onCreate -string:onCreate", "core/java/android/app/ActivityThread.java:6"},
+		{"onCreate -comment:onCreate", "core/java/android/app/Activity.java:10,12 core/java/android/app/ActivityThread.java:6"},
+	}
+	for _, tt := range tests {
+		r := search(t, e, tt.query)
+		var got []string
+		for _, f := range r.Files {
+			var lines []string
+			for _, l := range f.Lines {
+				lines = append(lines, fmt.Sprint(l.Line))
+			}
+			slices.Sort(lines)
+			got = append(got, f.Path+":"+strings.Join(lines, ","))
+		}
+		slices.Sort(got)
+		if g := strings.Join(got, " "); g != tt.want {
+			t.Errorf("%q:\n got %s\nwant %s", tt.query, g, tt.want)
+		}
+	}
+}
+
 func TestFileGlobs(t *testing.T) {
 	tests := []struct {
 		glob string

@@ -32,6 +32,8 @@ import (
 //	                case:auto is case-sensitive only for terms with an
 //	                upper-case letter)
 //	sym:Foo         definitions of the symbol Foo
+//	usage:foo       foo outside comments and string literals (also code:);
+//	                comment:foo and string:foo match only inside them
 //
 // file: and lang: can be combined with OR and NOT like content terms.
 // repo:, case: and sym: apply to the whole query.
@@ -67,6 +69,7 @@ type Term struct {
 	Pattern  string // regexp syntax, including case flags
 	Literal  bool   // Text is matched literally
 	FoldCase bool
+	Region   region // part of the file a match must be in (usage:, comment:, string:)
 	Std      *stdregexp.Regexp // for finding match ranges within lines
 	syntax   *syntax.Regexp
 }
@@ -562,6 +565,13 @@ func (p *parser) atom(t token) (*Node, error) {
 			return nil, err
 		}
 		return wrap(q.leaf(term))
+	case "usage", "code", "comment", "string", "str":
+		term, err := newTerm(val, t.quoted, q.Case)
+		if err != nil {
+			return nil, err
+		}
+		term.Region = map[string]region{"usage": regionCode, "code": regionCode, "comment": regionComment, "string": regionString, "str": regionString}[key]
+		return wrap(q.leaf(term))
 	}
 	return nil, nil
 }
@@ -659,7 +669,8 @@ func newTerm(text string, quoted bool, mode string) (*Term, error) {
 
 func isKey(k string) bool {
 	switch strings.ToLower(k) {
-	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "symbol", "def", "content", "c":
+	case "file", "f", "path", "lang", "l", "language", "repo", "r", "case", "sym", "symbol", "def", "content", "c",
+		"usage", "code", "comment", "string", "str":
 		return true
 	}
 	return false
