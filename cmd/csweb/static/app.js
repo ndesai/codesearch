@@ -109,6 +109,7 @@ window.addEventListener('popstate', route);
 let view = null; // current page state
 
 function route() {
+  hideHover();
   const p = location.pathname;
   const params = new URLSearchParams(location.search);
   document.body.classList.toggle('home', p === '/');
@@ -873,7 +874,108 @@ function wordAt(x, y) {
   while (a > 0 && /[\w$]/.test(t[a - 1])) a--;
   while (b < t.length && /[\w$]/.test(t[b])) b++;
   const w = t.slice(a, b);
-  return identRE.test(w) ? {word: w, el: node.parentElement} : null;
+  return identRE.test(w) ? {word: w, el: node.parentElement, node, a, b} : null;
+}
+
+// ---- hover cards ----
+
+const hoverCache = new Map(); // "repo\0path\0sym" -> promise of /api/hover result
+let hoverTimer = 0, hoverKey = '', hoverHideTimer = 0;
+const canHover = matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+function hoverCard() {
+  let c = $('#hovercard');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = 'hovercard';
+    c.className = 'hovercard';
+    c.hidden = true;
+    c.addEventListener('mouseenter', () => clearTimeout(hoverHideTimer));
+    c.addEventListener('mouseleave', () => scheduleHideHover());
+    document.body.append(c);
+  }
+  return c;
+}
+
+function hideHover() {
+  clearTimeout(hoverTimer);
+  hoverKey = '';
+  const c = $('#hovercard');
+  if (c) c.hidden = true;
+}
+
+function scheduleHideHover() {
+  clearTimeout(hoverHideTimer);
+  hoverHideTimer = setTimeout(hideHover, 250);
+}
+
+// Show the card for the identifier under the pointer after a short pause.
+document.addEventListener('mousemove', e => {
+  if (!canHover || e.buttons) return;
+  if (e.target.closest('#hovercard')) return;
+  const src = e.target.closest('.codewrap .code.clickable .src');
+  if (!src || !view || view.kind !== 'file') { if (hoverKey) scheduleHideHover(); return; }
+  const hit = wordAt(e.clientX, e.clientY);
+  if (hit && hit.el && hit.el !== src && skipClasses.test(hit.el.className) && !hit.el.closest('mark')) { scheduleHideHover(); return; }
+  let rect = null;
+  if (hit) {
+    const range = document.createRange();
+    range.setStart(hit.node, hit.a);
+    range.setEnd(hit.node, hit.b);
+    rect = range.getBoundingClientRect();
+    if (e.clientX < rect.left - 1 || e.clientX > rect.right + 1 || e.clientY < rect.top - 1 || e.clientY > rect.bottom + 1) rect = null;
+  }
+  if (!rect) { scheduleHideHover(); return; }
+  const key = hit.word + '@' + Math.round(rect.left) + ',' + Math.round(rect.top);
+  if (key === hoverKey) { clearTimeout(hoverHideTimer); return; }
+  hoverKey = key;
+  clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => showHover(hit.word, rect, key), 350);
+});
+
+document.addEventListener('mousedown', e => { if (!e.target.closest('#hovercard')) hideHover(); });
+document.addEventListener('scroll', hideHover, true);
+
+async function showHover(sym, rect, key) {
+  const v = view;
+  if (!v || v.kind !== 'file') return;
+  const ck = v.repo + '\0' + v.path + '\0' + sym;
+  if (!hoverCache.has(ck)) {
+    if (hoverCache.size > 500) hoverCache.clear();
+    hoverCache.set(ck, api('hover', {sym, repo: v.repo, path: v.path}).catch(() => null));
+  }
+  const r = await hoverCache.get(ck);
+  if (key !== hoverKey || view !== v) return;
+  if (!r || !r.defs.length) { hideHover(); return; }
+  const d = r.defs[0];
+  const k = kindLetter[d.kind] || (d.kind ? d.kind[0] : 'd');
+  const c = hoverCard();
+  c.innerHTML = `<div class="hc-head"><span class="okind k-${esc(d.kind || 'def')}">${esc(k)}</span><b>${esc(r.symbol)}</b>
+      ${d.kind ? `<span class="muted">${esc(d.kind)}</span>` : ''}
+      <a class="hc-loc" href="${fileURL(d.repo, d.path, {line: d.line})}" title="${esc(d.repo + ': ' + d.path)}">${esc(d.path.split('/').pop())}:${d.line}</a></div>
+    <pre class="hc-sig">${d.html}</pre>` +
+    (d.doc ? `<div class="hc-doc">${esc(d.doc)}</div>` : '') +
+    `<div class="hc-foot"><a href="${fileURL(d.repo, d.path, {line: d.line})}">Go to definition</a> · <a href="#" data-refs="1">Find references</a>` +
+    (r.total > 1 ? ` · <span class="muted">${r.total - 1} more definition${r.total > 2 ? 's' : ''}</span>` : '') + '</div>';
+  $('[data-refs]', c).onclick = e => { e.preventDefault(); hideHover(); highlightSym(sym); showXref(sym, v.repo, v.path, 0, false); };
+  $$('a[href^="/"]', c).forEach(a => a.addEventListener('click', hideHover));
+  c.hidden = false;
+  // Below the word, or above it if there is no room; kept on screen.
+  const w = c.offsetWidth, h = c.offsetHeight;
+  let top = rect.bottom + 6;
+  if (top + h > innerHeight - 8 && rect.top - h - 6 > 8) top = rect.top - h - 6;
+  c.style.top = Math.max(8, top) + 'px';
+  c.style.left = Math.max(8, Math.min(rect.left, innerWidth - w - 8)) + 'px';
+}
+
+// "i" shows the card for the selected identifier (keyboard access).
+function hoverSelection() {
+  const sel = window.getSelection();
+  const w = sel.toString().trim();
+  if (!identRE.test(w) || !sel.rangeCount || !sel.anchorNode || !sel.anchorNode.parentElement?.closest('.codewrap .code .src')) return false;
+  hoverKey = 'sel:' + w;
+  showHover(w, sel.getRangeAt(0).getBoundingClientRect(), hoverKey);
+  return true;
 }
 
 document.addEventListener('click', async e => {
@@ -1434,7 +1536,7 @@ document.addEventListener('keydown', e => {
   const input = document.body.classList.contains('home') ? $('#app input') : qbox;
   if (e.key === '/') { e.preventDefault(); input.focus(); input.select(); }
   else if (e.key === '?') { $('#help').showModal(); }
-  else if (e.key === 'Escape') { if (closeMenus()) return; if (view && view.find) closeFind(); else closePanel(); }
+  else if (e.key === 'Escape') { if ($('#hovercard') && !$('#hovercard').hidden) { hideHover(); return; } if (closeMenus()) return; if (view && view.find) closeFind(); else closePanel(); }
   else if (e.key === 't' && view && view.kind === 'file') { toggleTree(); }
   else if ((e.key === 'j' || e.key === 'k') && view && view.kind === 'search') { e.preventDefault(); moveCursor(e.key === 'j' ? 1 : -1); }
   else if ((e.key === 'Enter' || e.key === 'o') && view && view.kind === 'search' && view.cursor >= 0) { openCursor(); }
@@ -1442,6 +1544,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'h' && view && view.kind === 'file' && view.data && view.data.git) { showHistory(); }
   else if (e.key === 'o' && view && view.kind === 'file') { e.preventDefault(); setSideTab('outline', true); }
   else if (e.key === 'f' && view && view.kind === 'file') { e.preventDefault(); openFind(); }
+  else if (e.key === 'i' && view && view.kind === 'file') { if (hoverSelection()) e.preventDefault(); }
   else if (e.key === 'y' && view && view.kind === 'file' && view.data && view.data.kind === 'file') { copyLink('permalink', true); }
   else if ((e.key === 'n' || e.key === 'N') && view && view.marks) { gotoMark(e.key === 'n' ? 1 : -1); }
 });

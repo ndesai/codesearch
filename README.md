@@ -31,7 +31,8 @@ tools and adds a configurable incremental indexer and a full web app.
 - Syntax highlighting for about 300 languages (via [Chroma](https://github.com/alecthomas/chroma)),
   including Android files such as `Android.bp`, AIDL, HIDL and `.rc`.
 - Click any identifier to see its definitions and references; Ctrl/⌘-click jumps
-  straight to the definition.
+  straight to the definition. Hover over it for a card with its signature and
+  doc comment.
 - File tree, file outline (classes, functions, methods), and find in file.
 - Links to lines and line ranges; copy the path, a link, a permalink pinned to
   the current git commit, or the raw file URL.
@@ -223,11 +224,13 @@ stands alone), so code like `func (b *Reader)` is searched as written.
 | `h` | File history |
 | `o` | File outline |
 | `y` | Copy a permalink pinned to the current commit |
+| `i` | Show the hover card for the selected identifier |
 | `t` | Toggle the sidebar |
 | `Esc` | Close the bottom panel |
 | `?` | Help |
 
-With the mouse: click an identifier for its definitions and references,
+With the mouse: hover over an identifier for its definition and documentation,
+click it for its definitions and references,
 Ctrl/⌘-click to jump to its definition, click a line number to link to it and
 Shift-click another to select a range, and click a commit in the blame column to
 see its diff.

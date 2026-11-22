@@ -696,3 +696,21 @@ func (s *server) handleSaved(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"saved": list})
 }
+
+// handleHover returns the definition of an identifier for a hover card.
+func (s *server) handleHover(w http.ResponseWriter, r *http.Request) {
+	res, err := s.engine.Hover(r.Context(), r.FormValue("sym"), r.FormValue("repo"), r.FormValue("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	type apiHover struct {
+		*search.HoverDef
+		HTML string `json:"html"`
+	}
+	defs := []apiHover{}
+	for _, d := range res.Defs {
+		defs = append(defs, apiHover{d, highlightSnippet(lang.Detect(d.Path).Lexer, d.Signature, nil)})
+	}
+	writeJSON(w, map[string]any{"symbol": res.Symbol, "total": res.Total, "defs": defs})
+}
