@@ -46,7 +46,8 @@ tools and adds a configurable incremental indexer and a full web app.
   the current git commit, or the raw file URL.
 - Markdown files open rendered (GitHub-flavored: tables, task lists, footnotes,
   highlighted code blocks), with relative links and images resolved in the
-  repository; **Code** switches to the source. Links to a line open the source.
+  repository; a Preview | Code toggle switches to the source. Links to a line
+  open the source.
   Raw HTML inside Markdown is not rendered.
 - In-place preview of HTML files, with their CSS, images and scripts, sandboxed
   away from the app.

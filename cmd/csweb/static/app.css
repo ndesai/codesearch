@@ -240,6 +240,7 @@ mark.cur { background: var(--mark-cur); }
 .finfo { color: var(--text-3); font-size: 12px; white-space: nowrap; margin-left: auto; }
 .fhead .popout { width: 28px; height: 28px; margin-left: -8px; }
 .fhead .popout svg { width: 16px; height: 16px; }
+.fhead .popout[hidden] { display: none; }
 .tbtn:disabled { opacity: .45; cursor: default; }
 iframe.preview { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
 
@@ -383,6 +384,12 @@ dialog#help .close { position: absolute; right: 10px; top: 10px; }
 .tbtn:hover { background: var(--bg-hover); color: var(--text); }
 .tbtn.on { background: var(--bg-sel); color: var(--chip-text); border-color: transparent; }
 .tbtn.busy { opacity: .6; cursor: progress; }
+.segtoggle { display: inline-flex; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; flex: none; }
+.segtoggle button { border: 0; background: var(--bg); color: var(--text-2); padding: 3px 12px; cursor: pointer; font: inherit; font-size: 12.5px; }
+.segtoggle button + button { border-left: 1px solid var(--border); }
+.segtoggle button:hover { background: var(--bg-hover); color: var(--text); }
+.segtoggle button[aria-pressed="true"] { background: var(--bg-sel); color: var(--chip-text); font-weight: 500; cursor: default; }
+.segtoggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .revbanner { font-size: 12px; background: var(--mark); border-radius: 12px; padding: 2px 10px; white-space: nowrap; }
 
 /* ---- blame ---- */

@@ -555,7 +555,8 @@ async function renderFile(repo, path, q, rev, at) {
   const isMD = typeof r.markdown === 'string';
   const canPreview = (isHTMLFile(path) && !rev && r.lines) || isMD;
   head.innerHTML = crumbsHTML(repo, path) + searchHereButton() +
-    (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>` : '') +
+    (canPreview ? `<span class="segtoggle" role="group" aria-label="View">
+      <button data-act="preview" data-on="1" aria-pressed="false" title="Show the rendered page">Preview</button><button data-act="preview" data-on="" aria-pressed="true" title="Show the source">Code</button></span>` : '') +
     (canPreview && !isMD ? `<a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
     revBanner(repo, path, rev) +
@@ -585,7 +586,7 @@ async function renderFile(repo, path, q, rev, at) {
     if (b.dataset.act === 'tree') toggleTree();
     if (b.dataset.act === 'blame') toggleBlame();
     if (b.dataset.act === 'history') showHistory();
-    if (b.dataset.act === 'preview') setPreview(!view.preview);
+    if (b.dataset.act === 'preview' && !!b.dataset.on !== !!view.preview) setPreview(!!b.dataset.on);
     if (b.dataset.act === 'searchhere') searchHere();
     if (b.dataset.act === 'rev') { e.stopPropagation(); toggleRevMenu(); }
   };
@@ -707,10 +708,7 @@ function setPreview(on) {
   const v = view, wrap = $('.codewrap', app), head = $('.fhead', app);
   if (!v || v.kind !== 'file' || !v.data || !wrap) return;
   v.preview = on;
-  const btn = $('[data-act="preview"]', head);
-  btn.classList.toggle('on', on);
-  btn.textContent = on ? 'Code' : 'Preview';
-  btn.title = on ? 'Show the source' : 'Show the rendered page';
+  $$('[data-act="preview"]', head).forEach(b => b.setAttribute('aria-pressed', String(!!b.dataset.on === on)));
   const popout = $('.popout', head);
   if (popout) popout.hidden = !on;
   $('[data-act="blame"]', head)?.toggleAttribute('disabled', on);
