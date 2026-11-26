@@ -383,6 +383,9 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["lines"] = renderSource(rel, src, terms)
+	if strings.EqualFold(langName, "markdown") && len(src) <= maxHighlightBytes {
+		resp["markdown"] = renderMarkdown(repo.Name, rel, rev, []byte(src))
+	}
 	if len(src) <= maxHighlightBytes {
 		resp["outline"] = outline.Extract(langName, src)
 	}

@@ -110,6 +110,7 @@ var families = map[string][]rule{
 	"Bash":                   {shFunc},
 	"Zsh":                    {shFunc},
 	"Markdown":               {mdHead},
+	"markdown":               {mdHead}, // Chroma's name for .md files
 	"Blueprint":              {bpModule, bpName},
 	"Makefile":               {makeRule},
 	"SQL":                    {sqlRule},
@@ -137,7 +138,7 @@ func Extract(langName, src string) []Symbol {
 			rules = append(rules, cDecl) // declarations without bodies
 		}
 	}
-	hashComment := langName != "Markdown" && !c
+	hashComment := !strings.EqualFold(langName, "markdown") && !c
 
 	var out []Symbol
 	var indents []int // indentation of enclosing entries

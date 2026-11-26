@@ -552,10 +552,11 @@ async function renderFile(repo, path, q, rev, at) {
   }
 
   const nlines = r.lines ? r.lines.length : 0;
-  const canPreview = isHTMLFile(path) && !rev && r.lines;
+  const isMD = typeof r.markdown === 'string';
+  const canPreview = (isHTMLFile(path) && !rev && r.lines) || isMD;
   head.innerHTML = crumbsHTML(repo, path) + searchHereButton() +
-    (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>
-      <a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
+    (canPreview ? `<button class="tbtn" data-act="preview" title="Show the rendered page">Preview</button>` : '') +
+    (canPreview && !isMD ? `<a class="iconbtn popout" href="${previewURL(repo, path)}" target="_blank" rel="noopener" title="Open the preview in a new tab" hidden>${icons.popout}</a>` : '') +
     `<span class="finfo">${esc(r.lang)}${nlines ? ' · ' + fmtNum(nlines) + ' lines' : ''} · ${fmtBytes(r.size)}</span>` +
     revBanner(repo, path, rev) +
     `<span class="findnav" hidden></span>` +
@@ -584,7 +585,7 @@ async function renderFile(repo, path, q, rev, at) {
     if (b.dataset.act === 'tree') toggleTree();
     if (b.dataset.act === 'blame') toggleBlame();
     if (b.dataset.act === 'history') showHistory();
-    if (b.dataset.act === 'preview') togglePreview();
+    if (b.dataset.act === 'preview') setPreview(!view.preview);
     if (b.dataset.act === 'searchhere') searchHere();
     if (b.dataset.act === 'rev') { e.stopPropagation(); toggleRevMenu(); }
   };
@@ -596,6 +597,8 @@ async function renderFile(repo, path, q, rev, at) {
     wrap.innerHTML = codeHTML(r.lines, true);
     setupFind(head, wrap, q);
     if (blameOn && r.git) toggleBlame(true);
+    // Markdown opens rendered, unless the link is to a line of its source.
+    if (isMD && !/^#L\d/.test(location.hash)) setPreview(true);
   }
   renderOutline(r.outline);
   onHash(true);
@@ -691,26 +694,37 @@ function searchHere() {
   qbox.setSelectionRange(qbox.value.length, qbox.value.length);
 }
 
-// ---- HTML preview ----
+// ---- HTML and Markdown preview ----
 
 const isHTMLFile = p => /\.(html?|xhtml)$/i.test(p);
 const previewURL = (repo, path) => '/preview/' + encodeURIComponent(repo) + '/' + encPath(path);
 
-// togglePreview switches an HTML file between its source and the
-// rendered page. The page runs in a sandboxed frame with an opaque
-// origin (see handlePreview), so its scripts can't reach the app.
-function togglePreview() {
+// setPreview switches a file between its source and the rendered page.
+// Markdown is rendered by the server (without raw HTML) and shown in
+// place. An HTML page runs in a sandboxed frame with an opaque origin
+// (see handlePreview), so its scripts can't reach the app.
+function setPreview(on) {
   const v = view, wrap = $('.codewrap', app), head = $('.fhead', app);
   if (!v || v.kind !== 'file' || !v.data || !wrap) return;
-  v.preview = !v.preview;
+  v.preview = on;
   const btn = $('[data-act="preview"]', head);
-  btn.classList.toggle('on', v.preview);
-  btn.textContent = v.preview ? 'Code' : 'Preview';
-  btn.title = v.preview ? 'Show the source' : 'Show the rendered page';
-  $('.popout', head).hidden = !v.preview;
-  $('[data-act="blame"]', head)?.toggleAttribute('disabled', v.preview);
-  $('.findnav', head).style.visibility = v.preview ? 'hidden' : '';
-  if (v.preview) {
+  btn.classList.toggle('on', on);
+  btn.textContent = on ? 'Code' : 'Preview';
+  btn.title = on ? 'Show the source' : 'Show the rendered page';
+  const popout = $('.popout', head);
+  if (popout) popout.hidden = !on;
+  $('[data-act="blame"]', head)?.toggleAttribute('disabled', on);
+  $('.findnav', head).style.visibility = on ? 'hidden' : '';
+  if (on && typeof v.data.markdown === 'string') {
+    wrap.innerHTML = `<article class="markdown-body">${v.data.markdown}</article>`;
+    $$('.markdown-body a[href]', wrap).forEach(a => {
+      if (/^(https?:)?\/\//i.test(a.getAttribute('href'))) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+    });
+    wrap.scrollTop = 0;
+    onHash(true);
+    return;
+  }
+  if (on) {
     wrap.innerHTML = `<iframe class="preview" title="Preview of ${esc(v.path)}" sandbox="allow-scripts allow-forms allow-popups allow-modals" src="${previewURL(v.repo, v.path)}"></iframe>`;
     return;
   }
@@ -828,6 +842,8 @@ async function revealInTree(repo, path) {
 
 let selAnchor = 0;
 function onHash(scroll) {
+  const md = $('.codewrap .markdown-body', app);
+  if (md) { mdScroll(md, location.hash); return; }
   const code = $('.codewrap .code', app);
   if (!code) return;
   $$('.line.sel', code).forEach(l => l.classList.remove('sel'));
@@ -843,6 +859,27 @@ function onHash(scroll) {
   }
 }
 window.addEventListener('hashchange', () => onHash(true));
+
+// mdScroll scrolls rendered Markdown to a heading: #md-<id> from a link,
+// or #L<n> from the outline (the last heading at or before line n).
+function mdScroll(md, hash) {
+  let el = null;
+  const m = /^#L(\d+)/.exec(hash);
+  if (m) {
+    for (const h of $$('[data-line]', md)) {
+      if (+h.dataset.line > +m[1]) break;
+      el = h;
+    }
+  } else if (hash.startsWith('#md-')) {
+    el = document.getElementById(decodeURIComponent(hash.slice(1)));
+  }
+  if (!el || !md.contains(el)) return;
+  const wrap = $('.codewrap', app);
+  wrap.scrollTop = el.offsetTop - 16;
+  el.classList.remove('md-target');
+  void el.offsetWidth;
+  el.classList.add('md-target');
+}
 
 document.addEventListener('click', e => {
   const n = e.target.closest('.codewrap .code .lnum');
@@ -1341,8 +1378,12 @@ function renderOutline(syms) {
 // syncOutline marks the outline entry for the code at the top of the view.
 function syncOutline() {
   const el = $('.fv .outline', app), wrap = $('.codewrap', app), first = $('#L1');
-  if (!el || !wrap || !first || !view.outline || !view.outline.length) return;
-  const top = Math.floor(wrap.scrollTop / first.offsetHeight) + 2;
+  const md = wrap && $('.markdown-body', wrap);
+  if (!el || !wrap || !(first || md) || !view.outline || !view.outline.length) return;
+  let top = 0;
+  if (md) {
+    for (const h of $$('[data-line]', md)) if (h.offsetTop <= wrap.scrollTop + 24) top = +h.dataset.line;
+  } else top = Math.floor(wrap.scrollTop / first.offsetHeight) + 2;
   let cur = -1;
   for (let i = 0; i < view.outline.length && view.outline[i].line <= top; i++) cur = i;
   $$('a.cur', el).forEach(a => a.classList.remove('cur'));

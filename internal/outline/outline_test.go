@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ndesai/codesearch/internal/lang"
 )
 
 func outline(lang, src string) string {
@@ -40,6 +42,7 @@ func TestExtract(t *testing.T) {
 			"class Point:1 | method String.shout:2 | object Registry:3 | .method load:4"},
 		{"Markdown", "# Title\n\nText\n\n## Install\n### Linux\n## Usage\n",
 			"h1 Title:1 | .h2 Install:5 | ..h3 Linux:6 | .h2 Usage:7"},
+		{lang.Detect("README.md").Name, "# Title\n\n## Usage\n", "h1 Title:1 | .h2 Usage:3"},
 		{"Blueprint", "cc_library {\n    name: \"libui\",\n    srcs: [\"a.cpp\"],\n}\n",
 			"module cc_library:1 | .name libui:2"},
 		{"Protocol Buffer", "message Req {\n  int32 id = 1;\n}\nservice Api {\n  rpc Get(Req) returns (Resp);\n}\n",
